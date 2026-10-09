@@ -1,8 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'firebase_options.dart';
 import 'models/food_analysis_result.dart';
 import 'models/fridge_recipe_models.dart';
+import 'models/user_profile.dart';
+import 'services/auth_service.dart';
+import 'services/user_service.dart';
 import 'services/food_analysis_service.dart';
 import 'services/fridge_analysis_service.dart';
 import 'services/meal_storage_service.dart';
@@ -10,7 +16,13 @@ import 'services/recipe_generation_service.dart';
 import 'services/recipe_search_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-void main() => runApp(const AmuduApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  runApp(const AmuduApp());
+}
 
 const green = Color(0xFF087832);
 const deepGreen = Color(0xFF075B2A);
@@ -57,11 +69,121 @@ class WelcomeGate extends StatefulWidget {
 }
 
 class _WelcomeGateState extends State<WelcomeGate> {
-  bool entered = false;
+  bool _guestEntered = false;
+  bool _isSignUp = false;
+  bool _isLoading = false;
+
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+
   @override
-  Widget build(BuildContext context) => entered
-      ? const MainShell()
-      : Scaffold(
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      _message(context, 'Please enter your email and password.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      if (mounted) {
+        _message(context, 'Welcome back!');
+      }
+    } catch (e) {
+      if (mounted) {
+        _message(context, AuthService.getErrorMessage(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleRegister() async {
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      _message(context, 'Please enter email and password.');
+      return;
+    }
+
+    if (password.length < 6) {
+      _message(context, 'Password must be at least 6 characters.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.instance.registerWithEmailAndPassword(
+        email: email,
+        password: password,
+        displayName: name.isNotEmpty ? name : null,
+      );
+      if (mounted) {
+        _message(context, 'Account created successfully! Welcome to Amudhu.');
+      }
+    } catch (e) {
+      if (mounted) {
+        _message(context, AuthService.getErrorMessage(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleForgotPassword() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _message(context, 'Enter your email address above, then tap Forgot password.');
+      return;
+    }
+
+    try {
+      await AuthService.instance.sendPasswordResetEmail(email);
+      if (mounted) {
+        _message(context, 'Password reset link sent to $email');
+      }
+    } catch (e) {
+      if (mounted) {
+        _message(context, AuthService.getErrorMessage(e));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: AuthService.instance.authStateChanges,
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+        if (user != null || _guestEntered) {
+          return MainShell(
+            onLogout: () {
+              setState(() => _guestEntered = false);
+            },
+          );
+        }
+
+        return Scaffold(
           body: SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -84,61 +206,94 @@ class _WelcomeGateState extends State<WelcomeGate> {
                       'Your AI Food & Nutrition Companion',
                       style: TextStyle(color: ink),
                     ),
-                    const SizedBox(height: 52),
-                    const Text(
-                      'Welcome Back!',
-                      style: TextStyle(
+                    const SizedBox(height: 40),
+                    Text(
+                      _isSignUp ? 'Create Account' : 'Welcome Back!',
+                      style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 5),
-                    const Text('Fuel your body, nourish your life.'),
+                    Text(
+                      _isSignUp
+                          ? 'Start your wellness journey with Amudhu.'
+                          : 'Fuel your body, nourish your life.',
+                    ),
                     const SizedBox(height: 28),
-                    const FormFieldBox(
+                    if (_isSignUp) ...[
+                      FormFieldBox(
+                        controller: _nameController,
+                        enabled: !_isLoading,
+                        icon: Icons.person_outline,
+                        label: 'Full Name',
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    FormFieldBox(
+                      controller: _emailController,
+                      enabled: !_isLoading,
                       icon: Icons.mail_outline,
                       label: 'Email address',
+                      keyboardType: TextInputType.emailAddress,
                     ),
                     const SizedBox(height: 12),
-                    const FormFieldBox(
+                    FormFieldBox(
+                      controller: _passwordController,
+                      enabled: !_isLoading,
                       icon: Icons.lock_outline,
-                      label: 'Password',
+                      label: _isSignUp ? 'Password (min. 6 characters)' : 'Password',
                       obscure: true,
                     ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => _message(
-                          context,
-                          'Password reset link sent (demo)',
+                    if (!_isSignUp)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _isLoading ? null : _handleForgotPassword,
+                          child: const Text('Forgot password?'),
                         ),
-                        child: const Text('Forgot password?'),
-                      ),
-                    ),
+                      )
+                    else
+                      const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: () => setState(() => entered = true),
+                        onPressed: _isLoading
+                            ? null
+                            : (_isSignUp ? _handleRegister : _handleLogin),
                         style: filledStyle,
-                      
-                        child: const Text('Log In'),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(_isSignUp ? 'Sign Up' : 'Log In'),
                       ),
                     ),
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(
-                        onPressed: () => setState(() => entered = true),
+                        onPressed: _isLoading
+                            ? null
+                            : () => setState(() => _isSignUp = !_isSignUp),
                         style: outlineStyle,
-                
-                        child: const Text('Create an account'),
+                        child: Text(
+                          _isSignUp ? 'Already have an account? Log In' : 'Create an account',
+                        ),
                       ),
                     ),
                     TextButton(
-                      onPressed: () => setState(() => entered = true),
+                      onPressed: _isLoading
+                          ? null
+                          : () => setState(() => _guestEntered = true),
                       child: const Text('Continue as guest'),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 28),
                     const Text('A little more mindful, one meal at a time 🌿'),
                   ],
                 ),
@@ -146,6 +301,9 @@ class _WelcomeGateState extends State<WelcomeGate> {
             ),
           ),
         );
+      },
+    );
+  }
 }
 
 ButtonStyle get filledStyle => FilledButton.styleFrom(
@@ -162,20 +320,28 @@ void _message(BuildContext c, String s) =>
     ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(s)));
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  final VoidCallback? onLogout;
+  const MainShell({super.key, this.onLogout});
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
 class _MainShellState extends State<MainShell> {
   int index = 0;
-  final pages = const [
-    HomeScreen(),
-    MealPlanScreen(),
-    ChatScreen(),
-    SmartPlateScreen(),
-    ProfileScreen(),
-  ];
+  late final List<Widget> pages;
+
+  @override
+  void initState() {
+    super.initState();
+    pages = [
+      const HomeScreen(),
+      const MealPlanScreen(),
+      const ChatScreen(),
+      const SmartPlateScreen(),
+      ProfileScreen(onLogout: widget.onLogout),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
@@ -221,43 +387,52 @@ class _MainShellState extends State<MainShell> {
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
   @override
-  Widget build(BuildContext context) => ScreenScroll(
-    children: [
-      Row(
-        children: [
-          const BrandMark(size: 35),
-          const SizedBox(width: 8),
-          const Text(
-            'அமுது',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: deepGreen,
+  Widget build(BuildContext context) {
+    final user = AuthService.instance.currentUser;
+    final userName = (user?.displayName != null && user!.displayName!.isNotEmpty)
+        ? user.displayName!
+        : (user?.email != null && user!.email!.contains('@')
+            ? user.email!.split('@').first
+            : 'Ananya');
+    final initial = userName.isNotEmpty ? userName[0].toUpperCase() : 'A';
+
+    return ScreenScroll(
+      children: [
+        Row(
+          children: [
+            const BrandMark(size: 35),
+            const SizedBox(width: 8),
+            const Text(
+              'அமுது',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: deepGreen,
+              ),
             ),
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: () => _message(context, 'You’re all caught up!'),
-            icon: const Icon(Icons.notifications_none_rounded),
-          ),
-          const CircleAvatar(
-            radius: 19,
-            backgroundColor: mint,
-            child: Text(
-              'A',
-              style: TextStyle(color: deepGreen, fontWeight: FontWeight.bold),
+            const Spacer(),
+            IconButton(
+              onPressed: () => _message(context, 'You’re all caught up!'),
+              icon: const Icon(Icons.notifications_none_rounded),
             ),
-          ),
-        ],
-      ),
-      const SizedBox(height: 16),
-      const Text(
-        'Hello, Ananya! 👋',
-        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 23, color: ink),
-      ),
-      const SizedBox(height: 4),
-      const Text('Let’s make healthy choices today.'),
-      const SizedBox(height: 20),
+            CircleAvatar(
+              radius: 19,
+              backgroundColor: mint,
+              child: Text(
+                initial,
+                style: const TextStyle(color: deepGreen, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Hello, $userName! 👋',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 23, color: ink),
+        ),
+        const SizedBox(height: 4),
+        const Text('Let’s make healthy choices today.'),
+        const SizedBox(height: 20),
       Row(
         children: [
           const Expanded(
@@ -480,6 +655,7 @@ class HomeScreen extends StatelessWidget {
       const SizedBox(height: 8),
     ],
   );
+  }
 }
 
 class MealPlanScreen extends StatelessWidget {
@@ -1435,110 +1611,234 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
-  @override
-  Widget build(BuildContext context) => ScreenScroll(
-    children: [
-      const PageHeading(
-        title: 'Your profile',
-        subtitle: 'Your wellness journey, at your pace.',
+  final VoidCallback? onLogout;
+  const ProfileScreen({super.key, this.onLogout});
+
+  Future<void> _showEditProfileDialog(
+    BuildContext context,
+    String currentName,
+    String uid,
+  ) async {
+    final textController = TextEditingController(text: currentName);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit Profile'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Full Name',
+            hintText: 'Enter your name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, textController.text.trim()),
+            style: filledStyle,
+            child: const Text('Save'),
+          ),
+        ],
       ),
-      CardBox(
-        child: Row(
-          children: [
-            const CircleAvatar(
-              radius: 29,
-              backgroundColor: mint,
-              child: Text(
-                'A',
-                style: TextStyle(
-                  fontSize: 24,
-                  color: deepGreen,
-                  fontWeight: FontWeight.bold,
+    );
+
+    if (result != null && result.isNotEmpty && context.mounted) {
+      try {
+        await UserService.instance.updateUserProfile(
+          uid: uid,
+          displayName: result,
+        );
+        await AuthService.instance.currentUser?.updateDisplayName(result);
+        if (context.mounted) {
+          _message(context, 'Profile updated successfully!');
+        }
+      } catch (e) {
+        if (context.mounted) {
+          _message(context, AuthService.getErrorMessage(e));
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = AuthService.instance.currentUser;
+
+    return ScreenScroll(
+      children: [
+        const PageHeading(
+          title: 'Your profile',
+          subtitle: 'Your wellness journey, at your pace.',
+        ),
+        if (user != null)
+          StreamBuilder<UserProfile?>(
+            stream: UserService.instance.streamUserProfile(user.uid),
+            builder: (context, snapshot) {
+              final profile = snapshot.data;
+              final displayName = profile?.displayName ??
+                  user.displayName ??
+                  (user.email != null ? user.email!.split('@').first : 'User');
+              final email = profile?.email ?? user.email ?? 'No email';
+              final initial = displayName.isNotEmpty
+                  ? displayName[0].toUpperCase()
+                  : 'U';
+
+              return CardBox(
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 29,
+                      backgroundColor: mint,
+                      child: Text(
+                        initial,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          color: deepGreen,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17,
+                            ),
+                          ),
+                          Text(email),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => _showEditProfileDialog(
+                        context,
+                        displayName,
+                        user.uid,
+                      ),
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
+                  ],
+                ),
+              );
+            },
+          )
+        else
+          CardBox(
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  radius: 29,
+                  backgroundColor: mint,
+                  child: Text(
+                    'G',
+                    style: TextStyle(
+                      fontSize: 24,
+                      color: deepGreen,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Guest User',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                        ),
+                      ),
+                      Text('Using Amudhu in guest mode'),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _message(context, 'Sign in to customize your profile'),
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+              ],
+            ),
+          ),
+        const SectionTitle('Your week'),
+        const CardBox(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              StatMini(label: 'Meals logged', value: '28'),
+              StatMini(label: 'Calories burned', value: '1,620'),
+              StatMini(label: 'Streak', value: '7 days'),
+            ],
+          ),
+        ),
+        const SectionTitle('Your goals'),
+        const GoalRow(
+          icon: Icons.water_drop_outlined,
+          title: 'Drink 8 glasses of water',
+          progress: '6 / 8 glasses',
+          p: .75,
+        ),
+        const GoalRow(
+          icon: Icons.grass_outlined,
+          title: 'Eat 30 g of fiber',
+          progress: '25 / 30 g',
+          p: .83,
+        ),
+        const SectionTitle('Preferences'),
+        CardBox(
+          child: Column(
+            children: [
+              const SettingsRow(
+                icon: Icons.restaurant_menu,
+                title: 'Diet preference',
+                value: 'Vegetarian',
+              ),
+              const Divider(height: 20),
+              const SettingsRow(
+                icon: Icons.monitor_weight_outlined,
+                title: 'Nutrition goal',
+                value: 'Maintain weight',
+              ),
+              const Divider(height: 20),
+              SettingsRow(
+                icon: Icons.settings_outlined,
+                title: 'Settings & reminders',
+                value: 'Manage',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
                 ),
               ),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Ananya Sharma',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-                  ),
-                  Text('ananya@example.com'),
-                ],
-              ),
-            ),
-            IconButton(
-              onPressed: () => _message(context, 'Edit profile (demo)'),
-              icon: const Icon(Icons.edit_outlined),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-      const SectionTitle('Your week'),
-      CardBox(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            const StatMini(label: 'Meals logged', value: '28'),
-            const StatMini(label: 'Calories burned', value: '1,620'),
-            const StatMini(label: 'Streak', value: '7 days'),
-          ],
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () async {
+            await AuthService.instance.signOut();
+            MealStorageService.instance.clear();
+            onLogout?.call();
+            if (context.mounted) {
+              _message(context, 'Logged out successfully');
+            }
+          },
+          style: outlineStyle,
+          icon: const Icon(Icons.logout),
+          label: Text(user != null ? 'Log out' : 'Exit guest mode'),
         ),
-      ),
-      const SectionTitle('Your goals'),
-      const GoalRow(
-        icon: Icons.water_drop_outlined,
-        title: 'Drink 8 glasses of water',
-        progress: '6 / 8 glasses',
-        p: .75,
-      ),
-      const GoalRow(
-        icon: Icons.grass_outlined,
-        title: 'Eat 30 g of fiber',
-        progress: '25 / 30 g',
-        p: .83,
-      ),
-      const SectionTitle('Preferences'),
-      CardBox(
-        child: Column(
-          children: [
-            SettingsRow(
-              icon: Icons.restaurant_menu,
-              title: 'Diet preference',
-              value: 'Vegetarian',
-            ),
-            const Divider(height: 20),
-            const SettingsRow(
-              icon: Icons.monitor_weight_outlined,
-              title: 'Nutrition goal',
-              value: 'Maintain weight',
-            ),
-            const Divider(height: 20),
-            SettingsRow(
-              icon: Icons.settings_outlined,
-              title: 'Settings & reminders',
-              value: 'Manage',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              ),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 8),
-      OutlinedButton.icon(
-        onPressed: () => _message(context, 'You are using demo mode'),
-        style: outlineStyle,
-        icon: const Icon(Icons.logout),
-        label: const Text('Log out'),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class FridgeScreen extends StatefulWidget {
@@ -4014,14 +4314,24 @@ class FormFieldBox extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool obscure;
+  final TextEditingController? controller;
+  final TextInputType? keyboardType;
+  final bool enabled;
+
   const FormFieldBox({
     super.key,
     required this.icon,
     required this.label,
     this.obscure = false,
+    this.controller,
+    this.keyboardType,
+    this.enabled = true,
   });
   @override
   Widget build(BuildContext context) => TextField(
+    controller: controller,
+    enabled: enabled,
+    keyboardType: keyboardType,
     obscureText: obscure,
     decoration: InputDecoration(
       prefixIcon: Icon(icon, size: 19),
@@ -4409,21 +4719,24 @@ class SettingsRow extends StatelessWidget {
     this.onTap,
   });
   @override
-  Widget build(BuildContext context) => ListTile(
-    onTap: onTap,
-    contentPadding: EdgeInsets.zero,
-    dense: true,
-    leading: Icon(icon, color: green),
-    title: Text(
-      title,
-      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-    ),
-    trailing: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(value, style: const TextStyle(fontSize: 11)),
-        const Icon(Icons.chevron_right, size: 17),
-      ],
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: ListTile(
+      onTap: onTap,
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: Icon(icon, color: green),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(value, style: const TextStyle(fontSize: 11)),
+          const Icon(Icons.chevron_right, size: 17),
+        ],
+      ),
     ),
   );
 }

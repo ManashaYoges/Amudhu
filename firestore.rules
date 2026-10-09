@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Rules for user profile documents
+    match /users/{userId} {
+      // Authenticated users can only read their own profile document
+      allow read: if isOwner(userId);
+
+      // Authenticated users can create their own profile document.
+      // - UID must match request auth UID
+      // - Role must not be privileged upon creation (defaults to 'user')
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && request.resource.data.email == request.auth.token.email
+                    && (!('role' in request.resource.data) || request.resource.data.role == 'user');
+
+      // Authenticated users can only update their own profile document.
+      // - UID, role, and createdAt cannot be modified by the client
+      allow update: if isOwner(userId)
+                    && request.resource.data.uid == resource.data.uid
+                    && request.resource.data.role == resource.data.role
+                    && request.resource.data.createdAt == resource.data.createdAt;
+
+      // Deletion is prohibited by default from the client
+      allow delete: if false;
+    }
+
+    // Default deny-all rule for all other collections and documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

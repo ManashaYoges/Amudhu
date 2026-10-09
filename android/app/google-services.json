@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "450026241130",
+    "project_id": "amudhu-6505f",
+    "storage_bucket": "amudhu-6505f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:450026241130:android:8250be8a233842540e9e13",
+        "android_client_info": {
+          "package_name": "com.amudhu.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "450026241130-7065n2ptur6fgh32qh9f54rkmumod83j.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6Tg7JK9wbtrgKB-dZTtqD9hHY1YHKCIc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "450026241130-7065n2ptur6fgh32qh9f54rkmumod83j.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "450026241130-t34mpofrt7nbgt1cvgd6tej68ebo89h1.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.amudu"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:450026241130:android:5f361299b63076fa0e9e13",
+        "android_client_info": {
+          "package_name": "com.example.amudu"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "450026241130-7065n2ptur6fgh32qh9f54rkmumod83j.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6Tg7JK9wbtrgKB-dZTtqD9hHY1YHKCIc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "450026241130-7065n2ptur6fgh32qh9f54rkmumod83j.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "450026241130-t34mpofrt7nbgt1cvgd6tej68ebo89h1.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.amudu"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
