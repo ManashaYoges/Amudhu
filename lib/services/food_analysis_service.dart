@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../models/food_analysis_result.dart';
+import 'nutrition_database_service.dart';
 
 /// Exception thrown when food analysis fails.
 class FoodAnalysisException implements Exception {
@@ -14,442 +18,289 @@ class FoodAnalysisException implements Exception {
   String toString() => message;
 }
 
-/// Service responsible for analyzing meal images using AI or mock fallback.
+/// Service responsible for analyzing meal images using real AI Vision.
+/// Connects securely to the Amudhu backend or configured vision endpoint.
 class FoodAnalysisService {
-  /// Toggle to switch between mock/demo mode and live backend API.
-  /// For demonstration and college project presentations, keep this set to true.
-  /// Set to false when connecting to a live AI Vision backend server.
-  static const bool useMockAnalysis = true;
+  /// Default backend URL.
+  /// On Android emulator, '10.0.2.2' maps to the host machine's 'localhost'.
+  /// On Windows desktop, macOS, iOS simulator, or Web, 'localhost' is used.
+  static String get defaultBackendUrl {
+    // Check if overridden via dart-define
+    const envUrl = String.fromEnvironment('AI_BACKEND_URL');
+    if (envUrl.isNotEmpty) return envUrl;
 
-  /// AI Backend URL endpoint.
-  /// Configure this with your team's backend server URL (e.g., https://amudhu-backend.example.com/api/analyze-plate)
-  /// Note: Do NOT store private API keys directly in client source code.
-  /// API keys should be securely managed on your backend server.
-  static const String backendApiUrl = 'https://api.amudhu.example.com/v1/analyze-plate';
+    if (!kIsWeb && Platform.isAndroid) {
+      return 'http://10.0.2.2:3000';
+    }
+    return 'http://localhost:3000';
+  }
 
-  /// Counter used in mock mode to provide varied, realistic meal recognitions.
-  static int _mockVariationIndex = 0;
+  /// Active backend base URL (can be customized by user/developer in settings)
+  static String activeBackendUrl = defaultBackendUrl;
 
-  /// Analyzes an image of food and returns a structured [FoodAnalysisResult].
+  /// Optional client-side Gemini API key supplied via --dart-define=GEMINI_API_KEY=...
+  /// Keeping credentials server-side is the recommended secure pattern.
+  static const String directGeminiApiKey = String.fromEnvironment('GEMINI_API_KEY');
+
+  /// Checks if the backend server is reachable and configured
+  Future<Map<String, dynamic>> checkBackendHealth() async {
+    try {
+      final uri = Uri.parse('$activeBackendUrl/api/health');
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+      return {'status': 'error', 'statusCode': res.statusCode};
+    } catch (e) {
+      return {'status': 'unreachable', 'error': e.toString()};
+    }
+  }
+
+  /// Analyzes a meal image by sending actual pixels to the vision pipeline.
+  /// NEVER returns mock or hardcoded meals.
   Future<FoodAnalysisResult> analyzeImage(File image) async {
-    // 1. Validate image file
+    // 1. Validate image file exists and is readable
     if (!await image.exists()) {
       throw const FoodAnalysisException(
-        "We couldn't use that image. Please choose another photo.",
+        "The selected image file could not be found. Please choose another photo.",
       );
     }
 
     final fileSize = await image.length();
     if (fileSize == 0) {
       throw const FoodAnalysisException(
-        "We couldn't use that image. Please choose another photo.",
+        "The selected image is empty. Please choose another photo.",
       );
     }
 
-    // 2. Perform analysis based on mode
-    if (useMockAnalysis) {
-      return _performMockAnalysis(image);
+    // 2. Perform real vision recognition via backend (or direct Gemini if configured)
+    if (directGeminiApiKey.isNotEmpty) {
+      return _performDirectGeminiAnalysis(image);
     } else {
       return _performBackendAnalysis(image);
     }
   }
 
-  /// Mock analysis simulation for demonstration and offline reliability.
-  Future<FoodAnalysisResult> _performMockAnalysis(File image) async {
-    // Simulate realistic AI model processing latency (1.8s)
-    await Future.delayed(const Duration(milliseconds: 1800));
-
-    // Realistic sample meals for demonstration
-    final sampleMeals = [
-      _sampleRiceDalGreens(image.path),
-      _sampleSouthIndianThali(image.path),
-      _sampleChapatiPaneer(image.path),
-      _sampleHealthyBreakfast(image.path),
-    ];
-
-    final result = sampleMeals[_mockVariationIndex % sampleMeals.length];
-    _mockVariationIndex++;
-    return result;
-  }
-
-  /// Live AI Backend Integration Point.
-  /// Connect this function to your secured server or cloud function endpoint.
+  /// Real Backend Vision Analysis
+  /// Sends the image to the secure backend endpoint which calls the Vision model
+  /// and calculates nutrition using the standardized food composition database.
   Future<FoodAnalysisResult> _performBackendAnalysis(File image) async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 15);
+    final endpoint = Uri.parse('$activeBackendUrl/api/analyze-plate');
 
     try {
-      final uri = Uri.parse(backendApiUrl);
-      final request = await client.postUrl(uri);
+      final request = http.MultipartRequest('POST', endpoint);
 
-      // Read image bytes and prepare multipart/form-data or base64 payload
-      final imageBytes = await image.readAsBytes();
-      final base64Image = base64Encode(imageBytes);
+      // Determine MIME type
+      final ext = image.path.split('.').last.toLowerCase();
+      String mime = 'image/jpeg';
+      if (ext == 'png') {
+        mime = 'image/png';
+      } else if (ext == 'webp') {
+        mime = 'image/webp';
+      }
 
-      final payload = jsonEncode({
-        'image': base64Image,
-        'filename': image.uri.pathSegments.isNotEmpty
+      final fileBytes = await image.readAsBytes();
+      final multipartFile = http.MultipartFile.fromBytes(
+        'image',
+        fileBytes,
+        filename: image.uri.pathSegments.isNotEmpty
             ? image.uri.pathSegments.last
             : 'meal.jpg',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+        contentType: MediaType.parse(mime),
+      );
+      request.files.add(multipartFile);
 
-      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(payload);
-
-      final response = await request.close();
+      // Send request with a reasonable timeout for multimodal AI inference
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 35),
+      );
+      final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
-        final responseBody = await response.transform(utf8.decoder).join();
-        final Map<String, dynamic> json = jsonDecode(responseBody);
+        final Map<String, dynamic> json = jsonDecode(utf8.decode(response.bodyBytes));
         return FoodAnalysisResult.fromJson(json, imagePath: image.path);
-      } else if (response.statusCode >= 500) {
+      } else if (response.statusCode == 422) {
+        // No food detected in the photo
+        final Map<String, dynamic>? errJson = _tryParseJson(response.body);
+        final message = errJson?['error'] as String? ??
+            "No food could be identified in this photo. Please make sure the plate is clearly visible.";
+        throw FoodAnalysisException(message);
+      } else if (response.statusCode == 503) {
+        // Backend missing API key
+        final Map<String, dynamic>? errJson = _tryParseJson(response.body);
+        final message = errJson?['error'] as String? ??
+            "AI Vision backend is not configured with an API key. Please set GEMINI_API_KEY in the backend server.";
+        throw FoodAnalysisException(message);
+      } else if (response.statusCode == 429) {
         throw const FoodAnalysisException(
-          "We couldn't analyze your meal right now. Please try again.",
+          "AI rate limit reached. Please wait a moment and try again.",
         );
       } else {
-        throw const FoodAnalysisException(
-          "Unable to analyze this image right now. Please try again.",
-        );
+        final Map<String, dynamic>? errJson = _tryParseJson(response.body);
+        final message = errJson?['error'] as String? ??
+            "Server returned an error (${response.statusCode}). Please try again.";
+        throw FoodAnalysisException(message);
       }
     } on SocketException catch (e) {
       throw FoodAnalysisException(
-        "Please check your internet connection and try again.",
+        "Cannot connect to the AI Vision backend at $activeBackendUrl.\n\n"
+        "Make sure the backend is running (`cd backend && npm start`), or update the backend address in settings.",
         e,
       );
     } on TimeoutException catch (e) {
       throw FoodAnalysisException(
-        "Analysis timed out. Please check your connection and try again.",
+        "Vision analysis timed out. Please check your network connection and try again.",
         e,
       );
     } on FormatException catch (e) {
       throw FoodAnalysisException(
-        "Invalid response from analysis server. Please try again.",
+        "Invalid response format from analysis server. Please check the backend logs.",
         e,
       );
     } catch (e) {
       if (e is FoodAnalysisException) rethrow;
       throw FoodAnalysisException(
-        "We couldn't analyze your meal right now. Please try again.",
+        "Could not analyze meal: ${e.toString()}",
         e,
       );
-    } finally {
-      client.close();
     }
   }
 
-  // --- Realistic Sample Presets for Demo Mode ---
-
-  static FoodAnalysisResult _sampleRiceDalGreens(String path) {
-    const items = [
-      FoodItem(
-        name: 'Steamed Rice',
-        quantity: '180 g',
-        calories: 230,
-        protein: 4.5,
-        carbs: 50.0,
-        fat: 0.5,
-        fiber: 1.0,
-        sugar: 0.1,
-        emoji: '🍚',
-      ),
-      FoodItem(
-        name: 'Lentil Dal',
-        quantity: '120 g',
-        calories: 140,
-        protein: 8.5,
-        carbs: 20.0,
-        fat: 3.0,
-        fiber: 5.0,
-        sugar: 1.2,
-        emoji: '🥣',
-      ),
-      FoodItem(
-        name: 'Boiled Egg',
-        quantity: '1 large',
-        calories: 78,
-        protein: 6.3,
-        carbs: 0.6,
-        fat: 5.3,
-        fiber: 0.0,
-        sugar: 0.6,
-        emoji: '🥚',
-      ),
-      FoodItem(
-        name: 'Mixed Vegetables & Greens',
-        quantity: '100 g',
-        calories: 72,
-        protein: 4.7,
-        carbs: 11.4,
-        fat: 1.2,
-        fiber: 3.5,
-        sugar: 2.8,
-        emoji: '🥦',
-      ),
-    ];
-
-    return FoodAnalysisResult(
-      mealName: 'Rice Bowl with Dal, Egg & Greens',
-      foods: items,
-      total: const NutritionSummary(
-        calories: 520,
-        protein: 24.0,
-        carbs: 68.0,
-        fat: 16.0,
-        fiber: 9.0,
-        sugar: 7.0,
-      ),
-      balance: const MealBalance(
-        score: 78,
-        status: 'Good balance!',
-        description:
-            'Your meal brings together grains, plant protein, whole eggs, and vegetables. A little more greens could add fiber and variety.',
-        tip: 'Try adding a side salad or an extra serving of greens for optimal digestion.',
-        amudhuNote:
-            'The lentils and egg contribute protein, while vegetables add micronutrients and fiber. Nutrition values are estimates based on standard portion guidelines.',
-      ),
-      vitaminsAndMinerals: const [
-        'Vitamin A  28%',
-        'B1  18%',
-        'B2  22%',
-        'B6  19%',
-        'B12  12%',
-        'Vitamin C  35%',
-        'Vitamin D  8%',
-        'Vitamin E  16%',
-        'Vitamin K  30%',
-        'Calcium  18%',
-        'Iron  24%',
-        'Magnesium  21%',
-        'Potassium  26%',
-        'Zinc  14%',
-        'Phosphorus  29%',
-      ],
-      timestamp: DateTime.now(),
-      imagePath: path,
+  /// Direct Gemini Vision inference when configured with GEMINI_API_KEY
+  Future<FoodAnalysisResult> _performDirectGeminiAnalysis(File image) async {
+    const model = 'gemini-1.5-flash';
+    final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$directGeminiApiKey',
     );
+
+    try {
+      final imageBytes = await image.readAsBytes();
+      final base64Image = base64Encode(imageBytes);
+
+      final ext = image.path.split('.').last.toLowerCase();
+      String mime = 'image/jpeg';
+      if (ext == 'png') mime = 'image/png';
+      if (ext == 'webp') mime = 'image/webp';
+
+      const prompt = '''
+You are an expert food recognition AI for Amudhu Smart Plate.
+Inspect this photograph of a meal and identify only the visibly present foods with realistic portion estimates.
+Carefully recognize South Indian, Indian (rice, sambar, rasam, dal, poriyal, idli, dosa, chapati, curries, etc.) and global foods.
+Never hallucinate or guess invisible ingredients, oils, or spices.
+For distinct items, list them separately.
+For mixed dishes, identify the dish.
+Return strictly a JSON object:
+{
+  "isFood": true,
+  "mealName": "Name of meal",
+  "foods": [
+    {
+      "name": "Food name",
+      "confidence": 0.90,
+      "estimatedGrams": 180,
+      "alternatives": [],
+      "notes": null
+    }
+  ],
+  "uncertaintyNotes": null
+}
+''';
+
+      final payload = jsonEncode({
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt},
+              {
+                'inlineData': {
+                  'mimeType': mime,
+                  'data': base64Image,
+                }
+              }
+            ]
+          }
+        ],
+        'generationConfig': {
+          'temperature': 0.1,
+          'responseMimeType': 'application/json',
+        }
+      });
+
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: payload,
+      ).timeout(const Duration(seconds: 35));
+
+      if (response.statusCode != 200) {
+        throw FoodAnalysisException('Gemini API returned code ${response.statusCode}: ${response.body}');
+      }
+
+      final resJson = jsonDecode(response.body);
+      final rawText = resJson['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
+      if (rawText == null || rawText.isEmpty) {
+        throw const FoodAnalysisException("No response received from vision model.");
+      }
+
+      String cleaned = rawText.trim();
+      if (cleaned.startsWith('```json')) {
+        cleaned = cleaned.replaceFirst(RegExp(r'^```json\s*'), '').replaceFirst(RegExp(r'\s*```$'), '');
+      } else if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replaceFirst(RegExp(r'^```\s*'), '').replaceFirst(RegExp(r'\s*```$'), '');
+      }
+
+      final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
+      if (parsed['isFood'] == false) {
+        throw const FoodAnalysisException("No visible food detected in this photo. Please upload a clear photo of a meal.");
+      }
+
+      final rawFoods = parsed['foods'] as List<dynamic>? ?? [];
+      final calculatedFoods = <FoodItem>[];
+
+      for (final f in rawFoods) {
+        final itemMap = f as Map<String, dynamic>;
+        final name = itemMap['name'] as String? ?? 'Cooked food';
+        final grams = (itemMap['estimatedGrams'] as num?)?.toDouble() ?? 100.0;
+        final conf = (itemMap['confidence'] as num?)?.toDouble() ?? 0.85;
+        final alts = (itemMap['alternatives'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? <String>[];
+        final notes = itemMap['notes'] as String?;
+
+        final item = NutritionDatabaseService.instance.calculateFoodItem(
+          name: name,
+          grams: grams,
+          confidence: conf,
+          alternatives: alts,
+          notes: notes,
+        );
+        calculatedFoods.add(item);
+      }
+
+      final total = FoodAnalysisResult.calculateTotal(calculatedFoods);
+      final balance = FoodAnalysisResult.calculateBalance(total, calculatedFoods);
+
+      return FoodAnalysisResult(
+        mealName: parsed['mealName'] as String? ?? 'Identified Meal',
+        foods: calculatedFoods,
+        total: total,
+        balance: balance,
+        vitaminsAndMinerals: FoodAnalysisResult.defaultVitamins,
+        timestamp: DateTime.now(),
+        imagePath: image.path,
+        analysisSource: 'real_ai',
+        isEstimate: true,
+        uncertaintyNotes: parsed['uncertaintyNotes'] as String?,
+      );
+    } catch (e) {
+      if (e is FoodAnalysisException) rethrow;
+      throw FoodAnalysisException("Direct AI vision analysis failed: $e", e);
+    }
   }
 
-  static FoodAnalysisResult _sampleSouthIndianThali(String path) {
-    const items = [
-      FoodItem(
-        name: 'Steamed Idli / Rice',
-        quantity: '150 g',
-        calories: 195,
-        protein: 4.0,
-        carbs: 42.0,
-        fat: 0.4,
-        fiber: 1.2,
-        sugar: 0.2,
-        emoji: '🍚',
-      ),
-      FoodItem(
-        name: 'Vegetable Sambar',
-        quantity: '140 g',
-        calories: 130,
-        protein: 5.5,
-        carbs: 18.0,
-        fat: 4.0,
-        fiber: 4.0,
-        sugar: 2.0,
-        emoji: '🥣',
-      ),
-      FoodItem(
-        name: 'Beans & Carrot Poriyal',
-        quantity: '110 g',
-        calories: 85,
-        protein: 3.2,
-        carbs: 11.0,
-        fat: 3.5,
-        fiber: 4.2,
-        sugar: 3.1,
-        emoji: '🥗',
-      ),
-      FoodItem(
-        name: 'Curd / Yogurt',
-        quantity: '100 g',
-        calories: 68,
-        protein: 4.1,
-        carbs: 4.7,
-        fat: 3.2,
-        fiber: 0.0,
-        sugar: 4.0,
-        emoji: '🥛',
-      ),
-    ];
-
-    return FoodAnalysisResult(
-      mealName: 'South Indian Balanced Thali',
-      foods: items,
-      total: const NutritionSummary(
-        calories: 478,
-        protein: 16.8,
-        carbs: 75.7,
-        fat: 11.1,
-        fiber: 9.4,
-        sugar: 9.3,
-      ),
-      balance: const MealBalance(
-        score: 84,
-        status: 'Well balanced!',
-        description:
-            'Great inclusion of fermented curd for probiotics and vegetable poriyal for fiber.',
-        tip: 'Consider adding a handful of sprouts or boiled pulses to boost protein to 20g+.',
-        amudhuNote:
-            'Curd offers beneficial gut bacteria and calcium, while drumstick and vegetables in sambar supply vitamin C and antioxidants.',
-      ),
-      vitaminsAndMinerals: const [
-        'Vitamin A  34%',
-        'B12  16%',
-        'Vitamin C  42%',
-        'Calcium  26%',
-        'Iron  18%',
-        'Magnesium  20%',
-        'Potassium  28%',
-        'Folate  22%',
-      ],
-      timestamp: DateTime.now(),
-      imagePath: path,
-    );
-  }
-
-  static FoodAnalysisResult _sampleChapatiPaneer(String path) {
-    const items = [
-      FoodItem(
-        name: 'Whole Wheat Chapati',
-        quantity: '2 pieces',
-        calories: 210,
-        protein: 6.2,
-        carbs: 38.0,
-        fat: 3.5,
-        fiber: 5.0,
-        sugar: 0.8,
-        emoji: '🫓',
-      ),
-      FoodItem(
-        name: 'Palak Paneer',
-        quantity: '140 g',
-        calories: 220,
-        protein: 11.5,
-        carbs: 8.0,
-        fat: 16.0,
-        fiber: 3.8,
-        sugar: 1.5,
-        emoji: '🧀',
-      ),
-      FoodItem(
-        name: 'Cucumber & Onion Salad',
-        quantity: '80 g',
-        calories: 35,
-        protein: 1.1,
-        carbs: 7.0,
-        fat: 0.3,
-        fiber: 2.2,
-        sugar: 2.5,
-        emoji: '🥗',
-      ),
-    ];
-
-    return FoodAnalysisResult(
-      mealName: 'Chapati with Palak Paneer & Salad',
-      foods: items,
-      total: const NutritionSummary(
-        calories: 465,
-        protein: 18.8,
-        carbs: 53.0,
-        fat: 19.8,
-        fiber: 11.0,
-        sugar: 4.8,
-      ),
-      balance: const MealBalance(
-        score: 82,
-        status: 'High Fiber & Protein!',
-        description:
-            'Whole wheat and spinach deliver high dietary fiber, and paneer provides rich calcium and protein.',
-        tip: 'A squeeze of fresh lemon juice on the salad aids non-heme iron absorption from spinach.',
-        amudhuNote:
-            'Spinach is packed with folate and vitamin K, while paneer supplies complete dairy protein for muscle maintenance.',
-      ),
-      vitaminsAndMinerals: const [
-        'Vitamin A  48%',
-        'Vitamin K  65%',
-        'Calcium  32%',
-        'Iron  22%',
-        'Magnesium  25%',
-        'Folate  30%',
-      ],
-      timestamp: DateTime.now(),
-      imagePath: path,
-    );
-  }
-
-  static FoodAnalysisResult _sampleHealthyBreakfast(String path) {
-    const items = [
-      FoodItem(
-        name: 'Rolled Oats Bowl',
-        quantity: '1 bowl (50g dry)',
-        calories: 190,
-        protein: 6.5,
-        carbs: 33.0,
-        fat: 3.0,
-        fiber: 5.2,
-        sugar: 1.0,
-        emoji: '🥣',
-      ),
-      FoodItem(
-        name: 'Sliced Banana & Berries',
-        quantity: '1 medium',
-        calories: 105,
-        protein: 1.3,
-        carbs: 27.0,
-        fat: 0.3,
-        fiber: 3.1,
-        sugar: 14.4,
-        emoji: '🍎',
-      ),
-      FoodItem(
-        name: 'Almonds & Chia Seeds',
-        quantity: '15 g',
-        calories: 88,
-        protein: 3.1,
-        carbs: 3.2,
-        fat: 7.4,
-        fiber: 2.8,
-        sugar: 0.4,
-        emoji: '🥜',
-      ),
-    ];
-
-    return FoodAnalysisResult(
-      mealName: 'Nutrient-Dense Oatmeal & Fruits',
-      foods: items,
-      total: const NutritionSummary(
-        calories: 383,
-        protein: 10.9,
-        carbs: 63.2,
-        fat: 10.7,
-        fiber: 11.1,
-        sugar: 15.8,
-      ),
-      balance: const MealBalance(
-        score: 80,
-        status: 'Wholesome Morning Energy',
-        description:
-            'Beta-glucan soluble fiber supports heart health and slow-release sustained energy throughout the morning.',
-        tip: 'Add a scoop of protein powder or Greek yogurt if you want to reach 20g+ morning protein.',
-        amudhuNote:
-            'Chia seeds and almonds supply omega-3 ALA and vitamin E, giving you steady energy without insulin spikes.',
-      ),
-      vitaminsAndMinerals: const [
-        'Vitamin C  18%',
-        'Vitamin E  24%',
-        'B6  22%',
-        'Magnesium  28%',
-        'Potassium  21%',
-        'Manganese  45%',
-      ],
-      timestamp: DateTime.now(),
-      imagePath: path,
-    );
+  static Map<String, dynamic>? _tryParseJson(String text) {
+    try {
+      return jsonDecode(text) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
   }
 }

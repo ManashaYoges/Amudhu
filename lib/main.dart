@@ -12,6 +12,7 @@ import 'services/user_service.dart';
 import 'services/food_analysis_service.dart';
 import 'services/fridge_analysis_service.dart';
 import 'services/meal_storage_service.dart';
+import 'services/nutrition_database_service.dart';
 import 'services/recipe_generation_service.dart';
 import 'services/recipe_search_service.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -880,6 +881,567 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
     );
   }
 
+  void _editFoodItem(int index) {
+    if (_analysisResult == null || index >= _analysisResult!.foods.length) return;
+    final item = _analysisResult!.foods[index];
+
+    final nameController = TextEditingController(text: item.name);
+    double grams = item.estimatedGrams;
+    final gramsController = TextEditingController(text: grams.toStringAsFixed(0));
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      backgroundColor: canvas,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 18,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 18,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Text(item.emoji, style: const TextStyle(fontSize: 26)),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Edit Food & Portion',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: ink,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Color(0xFFC81E1E)),
+                      tooltip: 'Remove food item',
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _removeFoodItem(index);
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Food Name',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Cooked white rice, Vegetable sambar',
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Text(
+                      'Portion (grams)',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${grams.toStringAsFixed(0)} g (estimate)',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: deepGreen,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _quickPortionChip('Small (80g)', 80, grams, (v) {
+                      setModalState(() {
+                        grams = v;
+                        gramsController.text = v.toStringAsFixed(0);
+                      });
+                    }),
+                    const SizedBox(width: 6),
+                    _quickPortionChip('Med (150g)', 150, grams, (v) {
+                      setModalState(() {
+                        grams = v;
+                        gramsController.text = v.toStringAsFixed(0);
+                      });
+                    }),
+                    const SizedBox(width: 6),
+                    _quickPortionChip('Large (220g)', 220, grams, (v) {
+                      setModalState(() {
+                        grams = v;
+                        gramsController.text = v.toStringAsFixed(0);
+                      });
+                    }),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Slider(
+                  value: grams.clamp(10.0, 500.0),
+                  min: 10.0,
+                  max: 500.0,
+                  divisions: 49,
+                  activeColor: green,
+                  inactiveColor: mint,
+                  label: '${grams.round()}g',
+                  onChanged: (val) {
+                    setModalState(() {
+                      grams = val;
+                      gramsController.text = val.toStringAsFixed(0);
+                    });
+                  },
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: filledStyle,
+                    onPressed: () {
+                      final updatedName = nameController.text.trim().isEmpty
+                          ? item.name
+                          : nameController.text.trim();
+                      final updatedGrams = double.tryParse(gramsController.text.trim()) ?? grams;
+
+                      Navigator.pop(ctx);
+                      _updateFoodItem(index, updatedName, updatedGrams);
+                    },
+                    child: const Text('Update & Recalculate Nutrition'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quickPortionChip(String label, double val, double currentVal, ValueChanged<double> onSelect) {
+    final selected = (currentVal - val).abs() < 5;
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: () => onSelect(val),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          backgroundColor: selected ? mint : Colors.white,
+          side: BorderSide(color: selected ? green : Colors.grey.shade300),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? deepGreen : ink,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _updateFoodItem(int index, String newName, double newGrams) {
+    if (_analysisResult == null) return;
+    final oldItem = _analysisResult!.foods[index];
+
+    final updatedItem = NutritionDatabaseService.instance.calculateFoodItem(
+      name: newName,
+      grams: newGrams,
+      confidence: oldItem.confidence,
+      alternatives: oldItem.alternatives,
+      notes: oldItem.notes,
+    );
+
+    final currentFoods = List<FoodItem>.from(_analysisResult!.foods);
+    currentFoods[index] = updatedItem;
+
+    final updatedResult = NutritionDatabaseService.instance.recalculateMeal(
+      original: _analysisResult!,
+      updatedFoods: currentFoods,
+    );
+
+    setState(() {
+      _analysisResult = updatedResult;
+    });
+    _message(context, 'Updated nutrition for $newName');
+  }
+
+  void _removeFoodItem(int index) {
+    if (_analysisResult == null) return;
+    final currentFoods = List<FoodItem>.from(_analysisResult!.foods);
+    final removed = currentFoods.removeAt(index);
+
+    if (currentFoods.isEmpty) {
+      _message(context, 'Plate cannot be empty. Please add at least one food.');
+      return;
+    }
+
+    final updatedResult = NutritionDatabaseService.instance.recalculateMeal(
+      original: _analysisResult!,
+      updatedFoods: currentFoods,
+    );
+
+    setState(() {
+      _analysisResult = updatedResult;
+    });
+    _message(context, 'Removed ${removed.name}');
+  }
+
+  void _addFoodItem() {
+    if (_analysisResult == null) return;
+
+    final nameController = TextEditingController();
+    double grams = 100.0;
+
+    final popularOptions = [
+      'Cooked white rice',
+      'Cooked lentil dal',
+      'Vegetable sambar',
+      'Tomato rasam',
+      'Curd / Yogurt',
+      'Whole wheat chapati',
+      'Beans Poriyal',
+      'Boiled Egg',
+      'Fresh Green Salad',
+      'Papad / Papadum',
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      backgroundColor: canvas,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 18,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 18,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Add Missed Food',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: ink,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Food Name',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Curd, Papad, Poriyal',
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Quick suggestions:',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: popularOptions.map((opt) {
+                    return InkWell(
+                      onTap: () {
+                        setModalState(() {
+                          nameController.text = opt;
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: mint,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          opt,
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: deepGreen),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Text(
+                      'Portion (grams)',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${grams.toStringAsFixed(0)} g',
+                      style: const TextStyle(fontWeight: FontWeight.w800, color: deepGreen, fontSize: 13),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Slider(
+                  value: grams.clamp(10.0, 500.0),
+                  min: 10.0,
+                  max: 500.0,
+                  divisions: 49,
+                  activeColor: green,
+                  inactiveColor: mint,
+                  label: '${grams.round()}g',
+                  onChanged: (val) {
+                    setModalState(() {
+                      grams = val;
+                    });
+                  },
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: filledStyle,
+                    onPressed: () {
+                      final enteredName = nameController.text.trim();
+                      if (enteredName.isEmpty) {
+                        _message(context, 'Please enter a food name');
+                        return;
+                      }
+
+                      final newItem = NutritionDatabaseService.instance.calculateFoodItem(
+                        name: enteredName,
+                        grams: grams,
+                        confidence: 1.0,
+                        notes: 'Added manually by user',
+                      );
+
+                      final currentFoods = List<FoodItem>.from(_analysisResult!.foods);
+                      currentFoods.add(newItem);
+
+                      final updatedResult = NutritionDatabaseService.instance.recalculateMeal(
+                        original: _analysisResult!,
+                        updatedFoods: currentFoods,
+                      );
+
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _analysisResult = updatedResult;
+                      });
+                      _message(context, 'Added $enteredName to your plate');
+                    },
+                    child: const Text('Add to Plate & Recalculate'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showBackendSettingsModal() {
+    final urlController = TextEditingController(text: FoodAnalysisService.activeBackendUrl);
+    String? testStatus;
+    bool isTesting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      backgroundColor: canvas,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 18,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 18,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Row(
+                  children: [
+                    Icon(Icons.hub_outlined, color: deepGreen),
+                    SizedBox(width: 8),
+                    Text(
+                      'AI Backend Connection',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: ink,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Amudhu connects securely to your local or hosted AI Vision server.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Backend Base URL',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: urlController,
+                  decoration: InputDecoration(
+                    hintText: 'http://localhost:3000 or http://10.0.2.2:3000',
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (testStatus != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: testStatus!.contains('Connected') ? mint : const Color(0xFFFDE8E8),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      testStatus!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: testStatus!.contains('Connected') ? deepGreen : const Color(0xFF9B1C1C),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: outlineStyle,
+                        onPressed: isTesting
+                            ? null
+                            : () async {
+                                setModalState(() {
+                                  isTesting = true;
+                                  testStatus = 'Testing connection…';
+                                });
+                                FoodAnalysisService.activeBackendUrl = urlController.text.trim();
+                                final health = await _analysisService.checkBackendHealth();
+                                setModalState(() {
+                                  isTesting = false;
+                                  if (health['status'] == 'online') {
+                                    final hasKey = health['apiKeyConfigured'] == true;
+                                    testStatus = 'Connected! Server is online.\nEngine: ${hasKey ? "Live Google Gemini Vision" : "Smart Local Nutrition Engine"}';
+                                  } else {
+                                    testStatus = 'Failed to connect. Check if server is running at ${urlController.text.trim()}';
+                                  }
+                                });
+                              },
+                        icon: isTesting
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.wifi_tethering),
+                        label: const Text('Test Connection'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        style: filledStyle,
+                        onPressed: () {
+                          FoodAnalysisService.activeBackendUrl = urlController.text.trim();
+                          Navigator.pop(ctx);
+                          _message(context, 'Backend URL updated to ${urlController.text.trim()}');
+                        },
+                        child: const Text('Save URL'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showImageSourceModal() {
     showModalBottomSheet(
       context: context,
@@ -991,9 +1553,21 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
   @override
   Widget build(BuildContext context) => ScreenScroll(
     children: [
-      const PageHeading(
-        title: 'Smart Plate',
-        subtitle: 'A closer look at what’s on your plate.',
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Expanded(
+            child: PageHeading(
+              title: 'Smart Plate',
+              subtitle: 'A closer look at what’s on your plate.',
+            ),
+          ),
+          IconButton(
+            onPressed: _showBackendSettingsModal,
+            icon: const Icon(Icons.hub_outlined, color: deepGreen),
+            tooltip: 'Configure AI Backend Server',
+          ),
+        ],
       ),
 
       // Error banner
@@ -1006,24 +1580,49 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: const Color(0xFFF8B4B4)),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.info_outline, color: Color(0xFFC81E1E), size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  _errorMessage!,
-                  style: const TextStyle(
-                    color: Color(0xFF9B1C1C),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+              Row(
+                children: [
+                  const Icon(Icons.info_outline, color: Color(0xFFC81E1E), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: const TextStyle(
+                        color: Color(0xFF9B1C1C),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                ),
+                  IconButton(
+                    onPressed: () => setState(() => _errorMessage = null),
+                    icon: const Icon(Icons.close, size: 16, color: Color(0xFF9B1C1C)),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
               ),
-              IconButton(
-                onPressed: () => setState(() => _errorMessage = null),
-                icon: const Icon(Icons.close, size: 16, color: Color(0xFF9B1C1C)),
-                visualDensity: VisualDensity.compact,
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: _showBackendSettingsModal,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.settings, size: 14, color: Color(0xFF9B1C1C)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Configure Backend Server URL',
+                      style: TextStyle(
+                        color: Color(0xFF9B1C1C),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1265,16 +1864,36 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
       // State 4: Nutrition Results
       if (_analysisResult != null) ...[
         const SizedBox(height: 14),
-        const Text(
-          FoodAnalysisService.useMockAnalysis
-              ? 'DEMO ANALYSIS · ESTIMATED'
-              : 'AI ANALYSIS · ESTIMATED',
-          style: TextStyle(
-            color: deepGreen,
-            fontWeight: FontWeight.w800,
-            fontSize: 10,
-            letterSpacing: .7,
-          ),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: mint,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _analysisResult!.analysisSource == 'user_edited'
+                    ? 'USER ADJUSTED · NUTRITION RECALCULATED'
+                    : 'AI VISION ANALYSIS · ESTIMATED',
+                style: const TextStyle(
+                  color: deepGreen,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 10,
+                  letterSpacing: .7,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${_analysisResult!.foods.length} items',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 6),
         Text(
@@ -1285,14 +1904,67 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
           'Estimated nutrition based on detected foods and portion sizes.',
           style: TextStyle(fontSize: 12),
         ),
-        const SectionTitle('Detected foods'),
-        ..._analysisResult!.foods.map(
-          (food) => FoodLine(
-            emoji: food.emoji,
-            name: food.name,
-            portion: food.quantity,
-            kcal: '${food.calories} kcal',
+        if (_analysisResult!.uncertaintyNotes != null && _analysisResult!.uncertaintyNotes!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFFDE68A)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 16, color: Color(0xFF92400E)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _analysisResult!.uncertaintyNotes!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF92400E),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
+        ],
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            const Expanded(child: SectionTitle('Detected foods')),
+            TextButton.icon(
+              onPressed: _addFoodItem,
+              icon: const Icon(Icons.add_circle_outline, size: 16, color: deepGreen),
+              label: const Text(
+                'Add food',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: deepGreen,
+                ),
+              ),
+            ),
+          ],
+        ),
+        ..._analysisResult!.foods.asMap().entries.map(
+          (entry) {
+            final index = entry.key;
+            final food = entry.value;
+            return FoodLine(
+              emoji: food.emoji,
+              name: food.name,
+              portion: '${food.quantity} (estimate)',
+              kcal: '${food.calories} kcal',
+              confidence: food.confidence,
+              alternatives: food.alternatives,
+              notes: food.notes,
+              macros: 'P: ${food.protein.toStringAsFixed(1)}g · C: ${food.carbs.toStringAsFixed(1)}g · F: ${food.fat.toStringAsFixed(1)}g',
+              onEdit: () => _editFoodItem(index),
+            );
+          },
         ),
         const SectionTitle('Nutrition overview'),
         CardBox(
@@ -4554,48 +5226,173 @@ class SectionTitle extends StatelessWidget {
 
 class FoodLine extends StatelessWidget {
   final String emoji, name, portion, kcal;
+  final VoidCallback? onEdit;
+  final double? confidence;
+  final List<String>? alternatives;
+  final String? notes;
+  final String? macros;
+
   const FoodLine({
     super.key,
     required this.emoji,
     required this.name,
     required this.portion,
     required this.kcal,
+    this.onEdit,
+    this.confidence,
+    this.alternatives,
+    this.notes,
+    this.macros,
   });
+
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 7),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(15),
-    ),
-    child: Row(
-      children: [
-        Text(emoji, style: const TextStyle(fontSize: 22)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => InkWell(
+    onTap: onEdit,
+    borderRadius: BorderRadius.circular(15),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: (confidence != null && confidence! < 0.75)
+              ? const Color(0xFFF6D389)
+              : Colors.grey.shade200,
+          width: (confidence != null && confidence! < 0.75) ? 1.2 : 0.8,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
-              Text(portion, style: const TextStyle(fontSize: 11)),
+              Text(emoji, style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      portion,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                kcal,
+                style: const TextStyle(
+                  color: deepGreen,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+              if (onEdit != null) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: onEdit,
+                  tooltip: 'Edit portion or item',
+                  icon: const Icon(Icons.edit_outlined, size: 18, color: deepGreen),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ] else ...[
+                IconButton(
+                  onPressed: () => _message(context, 'Edit portion'),
+                  icon: const Icon(Icons.more_horiz),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
             ],
           ),
-        ),
-        Text(
-          kcal,
-          style: const TextStyle(
-            color: deepGreen,
-            fontWeight: FontWeight.w800,
-            fontSize: 12,
-          ),
-        ),
-        IconButton(
-          onPressed: () => _message(context, 'Edit portion (demo)'),
-          icon: const Icon(Icons.more_horiz),
-          visualDensity: VisualDensity.compact,
-        ),
-      ],
+          if (macros != null && macros!.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 32, top: 2),
+              child: Text(
+                macros!,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+          ],
+          if (confidence != null || (alternatives != null && alternatives!.isNotEmpty) || (notes != null && notes!.isNotEmpty)) ...[
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 32),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  if (confidence != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: confidence! >= 0.80 ? mint : const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        confidence! >= 0.80
+                            ? '${(confidence! * 100).toInt()}% match'
+                            : 'Uncertain (${(confidence! * 100).toInt()}%)',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: confidence! >= 0.80 ? deepGreen : const Color(0xFF92400E),
+                        ),
+                      ),
+                    ),
+                  if (alternatives != null && alternatives!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Alt: ${alternatives!.take(2).join(', ')}',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  if (notes != null && notes!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        notes!,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontStyle: FontStyle.italic,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     ),
   );
 }
