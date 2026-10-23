@@ -17,7 +17,21 @@ async function start() {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     throw new Error('JWT_SECRET must contain at least 32 characters');
   }
-  await connectDatabase();
+
+  try {
+    await connectDatabase();
+    console.log('[Database] Connected to MongoDB Atlas successfully.');
+  } catch (err) {
+    console.warn(`[Database] Notice: Initial MongoDB Atlas connection failed (${err.message}). Ensure your IP is whitelisted in Atlas. The server will continue running and retry.`);
+    const retryInterval = setInterval(async () => {
+      try {
+        await connectDatabase();
+        console.log('[Database] Connected to MongoDB Atlas successfully on retry!');
+        clearInterval(retryInterval);
+      } catch (_) {}
+    }, 15000);
+  }
+
   app.listen(port, '0.0.0.0', () => {
     console.log(`Amudhu API listening on port ${port}`);
     console.log(`Desktop: http://localhost:${port}`);

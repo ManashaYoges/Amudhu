@@ -23,4 +23,21 @@ async function authenticate(req, res, next) {
   }
 }
 
-module.exports = { authenticate };
+async function optionalAuthenticate(req, res, next) {
+  const header = req.get('authorization') || '';
+  const [scheme, token] = header.split(' ');
+  if (scheme === 'Bearer' && token && process.env.JWT_SECRET) {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: ['HS256'], issuer: 'amudhu-api', audience: 'amudhu-app',
+      });
+      if (!payload.jti || !(await RevokedToken.exists({ jti: payload.jti, expiresAt: { $gt: new Date() } }))) {
+        req.userId = payload.sub;
+        req.authJti = payload.jti;
+      }
+    } catch (_) {}
+  }
+  next();
+}
+
+module.exports = { authenticate, optionalAuthenticate };

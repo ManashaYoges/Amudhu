@@ -14,6 +14,9 @@ import 'services/nutrition_database_service.dart';
 import 'services/recipe_generation_service.dart';
 import 'services/recipe_search_service.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
+import 'models/chat_message.dart';
+import 'services/chat_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -2195,132 +2198,585 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final input = TextEditingController();
-  late final List<String> messages;
+  final TextEditingController _textController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  late final ChatService _chatService;
+  String? _activeContextText;
+
+  static const List<Map<String, String>> _suggestedPrompts = [
+    {
+      'emoji': '🍳',
+      'title': 'Breakfast ideas',
+      'prompt': 'What are some easy, healthy breakfast ideas for busy mornings?',
+    },
+    {
+      'emoji': '💪',
+      'title': 'High-protein meals',
+      'prompt': 'Suggest high-protein vegetarian meals for muscle recovery.',
+    },
+    {
+      'emoji': '🥗',
+      'title': 'Explain macros',
+      'prompt': 'Explain calories, protein, carbohydrates, and fats in simple terms.',
+    },
+    {
+      'emoji': '🧊',
+      'title': 'Fridge recipes',
+      'prompt': 'Give me recipe ideas using ingredients I commonly have in my kitchen.',
+    },
+    {
+      'emoji': '⚖️',
+      'title': 'Balance my plate',
+      'prompt': 'How can I make my everyday meals more balanced and nutrient-rich?',
+    },
+    {
+      'emoji': '📷',
+      'title': 'Explain Smart Plate',
+      'prompt': 'Explain how Smart Plate estimates calories and macronutrients from food photos.',
+    },
+  ];
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialMealContext != null &&
-        widget.initialMealContext!.trim().isNotEmpty) {
-      messages = [
-        widget.initialMealContext!.trim(),
-      ];
-    } else {
-      messages = [
-        'Hi Ananya! 👋\nWhat would you like to know about food today?',
-        'What are some easy protein-rich snacks?',
-        'Try Greek yogurt, roasted chickpeas, boiled eggs, or a handful of nuts. Pair with fruit for a satisfying snack.',
-      ];
+    _chatService = ChatService.instance;
+    _chatService.addListener(_onChatServiceUpdate);
+
+    if (widget.initialMealContext != null && widget.initialMealContext!.trim().isNotEmpty) {
+      _activeContextText = widget.initialMealContext!.trim();
+      _chatService.setActiveContext({
+        'promptContext': _activeContextText,
+      });
     }
   }
 
   @override
   void dispose() {
-    input.dispose();
+    _chatService.removeListener(_onChatServiceUpdate);
+    _textController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Widget _buildBody() => Column(
-    children: [
-      if (!widget.asStandalone)
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
-          child: PageHeading(
-            title: 'AI Food Assistant',
-            subtitle: 'Friendly ideas for everyday food choices.',
+  void _onChatServiceUpdate() {
+    if (mounted) {
+      setState(() {});
+      _scrollToBottom();
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent + 80,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _handleSend([String? presetText]) async {
+    final text = presetText ?? _textController.text;
+    if (text.trim().isEmpty || _chatService.isLoading) return;
+
+    if (presetText == null) {
+      _textController.clear();
+    }
+
+    await _chatService.sendMessage(
+      text,
+      contextOverride: _activeContextText != null
+          ? {'promptContext': _activeContextText}
+          : null,
+    );
+  }
+
+  Future<void> _confirmClearChat() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Start New Conversation?'),
+        content: const Text(
+          'This will clear your current chat history and start a fresh session with Amudhu.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
-        ),
-      Expanded(
-        child: ListView.builder(
-          padding: const EdgeInsets.all(18),
-          itemCount: messages.length,
-          itemBuilder: (c, i) {
-            final bool user = (widget.initialMealContext != null)
-                ? (i % 2 == 1)
-                : (i == 1 || (i >= 3 && i % 2 == 1));
-            return Align(
-              alignment: user ? Alignment.centerRight : Alignment.centerLeft,
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(14),
-                constraints: const BoxConstraints(maxWidth: 300),
-                decoration: BoxDecoration(
-                  color: user ? deepGreen : Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: .04),
-                      blurRadius: 10,
-                    ),
-                  ],
-                ),
-                child: Text(
-                  messages[i],
-                  style: TextStyle(
-                    color: user ? Colors.white : ink,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: deepGreen),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('New Chat'),
+          ),
+        ],
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: input,
-                decoration: InputDecoration(
-                  hintText: 'Ask about food or nutrition…',
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+    );
+
+    if (confirmed == true) {
+      await _chatService.clearConversation();
+      setState(() {
+        _activeContextText = null;
+      });
+      if (mounted) {
+        _message(context, 'New conversation started.');
+      }
+    }
+  }
+
+  void _copyToClipboard(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    _message(context, 'Copied to clipboard');
+  }
+
+  Widget _buildWelcomeView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 10, bottom: 16),
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: mint,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: green.withValues(alpha: 0.12),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
                   ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
+                ],
+              ),
+              child: const Center(
+                child: Text('✨', style: TextStyle(fontSize: 34)),
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: () {
-                if (input.text.trim().isNotEmpty) {
-                  setState(() {
-                    messages.add(input.text.trim());
-                    messages.add(
-                      'That’s a thoughtful question. A balanced, varied diet can help support your everyday nutrition.',
-                    );
-                    input.clear();
-                  });
-                }
-              },
-              icon: const Icon(Icons.arrow_upward),
-              style: IconButton.styleFrom(
-                backgroundColor: deepGreen,
-                foregroundColor: Colors.white,
+          ),
+          const Center(
+            child: Text(
+              'Hi! I’m Amudhu',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: ink,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Center(
+            child: Text(
+              'Your friendly AI food and nutrition assistant. What would you like to explore today?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF687067),
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Suggested Questions',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: ink,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(height: 12),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 2.1,
+            ),
+            itemCount: _suggestedPrompts.length,
+            itemBuilder: (context, idx) {
+              final p = _suggestedPrompts[idx];
+              return InkWell(
+                onTap: () => _handleSend(p['prompt']),
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE4EDE0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.02),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Text(p['emoji']!, style: const TextStyle(fontSize: 20)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          p['title']!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: ink,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContextBanner() {
+    if (_activeContextText == null) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: mint,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: green.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.attachment_rounded, size: 18, color: deepGreen),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Attached Context: Smart Plate / Recipe Details',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: deepGreen,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: const Icon(Icons.close, size: 16, color: deepGreen),
+            onPressed: () {
+              setState(() {
+                _activeContextText = null;
+                _chatService.clearActiveContext();
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(ChatMessage msg) {
+    if (msg.isUser) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12, left: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: deepGreen,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(18),
+              topRight: Radius.circular(18),
+              bottomLeft: Radius.circular(18),
+              bottomRight: Radius.circular(4),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: deepGreen.withValues(alpha: 0.15),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            msg.text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final isError = msg.isError;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14, right: 40),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isError ? const Color(0xFFFFF2F2) : Colors.white,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18),
+            topRight: Radius.circular(18),
+            bottomRight: Radius.circular(18),
+            bottomLeft: Radius.circular(4),
+          ),
+          border: Border.all(
+            color: isError ? const Color(0xFFFCA5A5) : const Color(0xFFE6EFE3),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 11,
+                  backgroundColor: isError ? Colors.red.shade100 : mint,
+                  child: Text(
+                    isError ? '!' : '✨',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isError ? Colors.red : deepGreen,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  isError ? 'Notice' : 'Amudhu',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: isError ? Colors.red.shade700 : deepGreen,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SelectableText(
+              msg.text,
+              style: TextStyle(
+                color: isError ? const Color(0xFF991B1B) : ink,
+                fontSize: 14,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (isError) ...[
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => _chatService.retryLastMessage(),
+                    icon: const Icon(Icons.refresh_rounded, size: 14, color: deepGreen),
+                    label: const Text(
+                      'Retry',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: deepGreen),
+                    ),
+                  ),
+                ] else ...[
+                  IconButton(
+                    icon: const Icon(Icons.copy_rounded, size: 15, color: Color(0xFF8B9489)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    tooltip: 'Copy response',
+                    onPressed: () => _copyToClipboard(msg.text),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThinkingBubble() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12, right: 80),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE6EFE3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: green,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'Amudhu is thinking…',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
               ),
             ),
           ],
         ),
       ),
-    ],
-  );
+    );
+  }
+
+  Widget _buildBody() {
+    final messages = _chatService.messages;
+    final isLoading = _chatService.isLoading;
+
+    return Column(
+      children: [
+        if (!widget.asStandalone)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: PageHeading(
+                    title: 'AI Food Assistant',
+                    subtitle: 'Friendly ideas for everyday food choices.',
+                  ),
+                ),
+                if (messages.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, color: Color(0xFF687067)),
+                    tooltip: 'New Conversation',
+                    onPressed: _confirmClearChat,
+                  ),
+              ],
+            ),
+          ),
+        _buildContextBanner(),
+        Expanded(
+          child: messages.isEmpty
+              ? _buildWelcomeView()
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                  itemCount: messages.length + (isLoading ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == messages.length && isLoading) {
+                      return _buildThinkingBubble();
+                    }
+                    return _buildMessageBubble(messages[index]);
+                  },
+                ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+          decoration: BoxDecoration(
+            color: canvas,
+            border: Border(
+              top: BorderSide(color: Colors.grey.shade200, width: 0.8),
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFDCE6D8)),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: TextField(
+                      controller: _textController,
+                      minLines: 1,
+                      maxLines: 4,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _handleSend(),
+                      decoration: const InputDecoration(
+                        hintText: 'Ask about food, nutrition or recipes…',
+                        hintStyle: TextStyle(fontSize: 13, color: Color(0xFF9AA299)),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 11),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: isLoading ? null : () => _handleSend(),
+                  icon: const Icon(Icons.arrow_upward, size: 20),
+                  style: IconButton.styleFrom(
+                    backgroundColor: deepGreen,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: const Color(0xFFC0CEC0),
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (widget.asStandalone) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Ask Amudhu'),
+          title: const Text(
+            'Ask Amudhu',
+            style: TextStyle(fontWeight: FontWeight.w800, color: ink),
+          ),
           backgroundColor: canvas,
+          elevation: 0,
+          actions: [
+            if (_chatService.messages.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: deepGreen),
+                tooltip: 'New Conversation',
+                onPressed: _confirmClearChat,
+              ),
+          ],
         ),
         body: SafeArea(child: _buildBody()),
       );

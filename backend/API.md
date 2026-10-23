@@ -28,6 +28,14 @@ All paths below require authentication. Records are always filtered by the token
 | PATCH | `/meals/:id` | Update a saved meal. |
 | DELETE | `/meals/:id` | Delete a saved meal. |
 
+## AI Food & Nutrition Chat
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/api/chat` | Optional | Send question with conversation history and context (`mealAnalysis`, `fridgeIngredients`, `recipe`). Returns dynamic AI answer. |
+| GET | `/api/chat/history/:conversationId?` | Optional | Retrieve stored messages for this conversation session. |
+| DELETE | `/api/chat/history/:conversationId` | Optional | Clear conversation history from MongoDB. |
+
 ## Existing application services
 
 | Method | Path | Purpose |

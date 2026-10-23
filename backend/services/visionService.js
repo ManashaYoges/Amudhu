@@ -48,7 +48,7 @@ Do NOT include markdown formatting or extra text outside the JSON object.
 /**
  * Calls Gemini Vision API to analyze image buffer
  */
-async function analyzeWithGemini(imageBuffer, mimeType, apiKey, modelName = 'gemini-1.5-flash') {
+async function analyzeWithGemini(imageBuffer, mimeType, apiKey, modelName = 'gemini-3.5-flash') {
   const base64Data = imageBuffer.toString('base64');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
@@ -231,7 +231,7 @@ function generateSmartPlateEstimate(buffer) {
  * 4. Calculates portion-scaled nutrients
  * 5. Assembles structured result
  */
-async function processFoodImage({ buffer, mimeType, apiKey, provider = 'gemini', model = 'gemini-1.5-flash' }) {
+async function processFoodImage({ buffer, mimeType, apiKey, provider = 'gemini', model = 'gemini-3.5-flash' }) {
   if (!buffer || buffer.length === 0) {
     throw new Error('No image data provided for recognition.');
   }

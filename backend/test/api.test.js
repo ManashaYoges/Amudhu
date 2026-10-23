@@ -144,3 +144,32 @@ test('nutrition recalculation endpoint remains available and validates input', a
   assert.equal(response.body.total.calories, 130);
   assert.equal(response.body.analysisSource, 'user_edited');
 });
+
+
+test('chat endpoint validates input and rejects empty messages', async () => {
+  await request(app).post('/api/chat').send({ message: '' }).expect(400);
+  await request(app).post('/api/chat').send({ message: '   ' }).expect(400);
+  await request(app).post('/api/chat').send({}).expect(400);
+});
+
+test('chat endpoint handles messages with conversation session and attached context', async () => {
+  const res = await request(app)
+    .post('/api/chat')
+    .send({
+      message: 'What are high-protein foods?',
+      conversationId: 'test_session_123',
+      context: {
+        mealAnalysis: {
+          mealName: 'Idli with Sambar',
+          foods: [{ name: 'Steamed Idli', quantity: '2 pieces' }],
+          total: { calories: 150, protein: 4, carbs: 30, fat: 1 },
+        },
+      },
+    })
+    .expect(200);
+
+  assert.equal(res.body.success, true);
+  assert.equal(typeof res.body.reply, 'string');
+  assert.ok(res.body.reply.length > 10);
+  assert.equal(res.body.conversationId, 'test_session_123');
+});

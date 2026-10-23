@@ -6,6 +6,7 @@ const multer = require('multer');
 const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const mealRoutes = require('./routes/meals');
+const chatRoutes = require('./routes/chat');
 const { notFound, errorHandler } = require('./middleware/errors');
 const { processFoodImage } = require('./services/visionService');
 const { calculateMealNutrition, FOOD_DATABASE } = require('./services/nutritionDatabase');
@@ -36,8 +37,10 @@ app.get(['/health', '/api/health'], (req, res) => res.json({
   apiKeyConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY),
   foodCatalogCount: FOOD_DATABASE.length, timestamp: new Date().toISOString(),
 }));
-app.use('/api/auth', authRoutes);
-app.use('/api/meals', mealRoutes);
+
+app.use(['/auth', '/api/auth'], authRoutes);
+app.use(['/meals', '/api/meals'], mealRoutes);
+app.use(['/chat', '/api/chat'], chatRoutes);
 
 app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async (req, res, next) => {
   let imageBuffer; let mimeType = 'image/jpeg';
@@ -52,7 +55,7 @@ app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async
   try {
     const apiKey = (process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
     const result = await processFoodImage({ buffer: imageBuffer, mimeType, apiKey,
-      provider: process.env.AI_PROVIDER || (apiKey ? 'gemini' : 'smart_local'), model: process.env.GEMINI_MODEL || 'gemini-1.5-flash' });
+      provider: process.env.AI_PROVIDER || (apiKey ? 'gemini' : 'smart_local'), model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' });
     if (!result.success) return res.status(422).json({ error: result.message, code: 'NO_FOOD_DETECTED' });
     return res.json(result);
   } catch (err) {
