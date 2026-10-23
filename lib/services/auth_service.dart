@@ -1,151 +1,125 @@
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
+import 'api_client.dart';
 import 'user_service.dart';
 
-/// Reusable authentication service managing Firebase Authentication flows
-/// and orchestrating initial Firestore user profile creation.
+class AuthUser {
+  final String uid;
+  final String email;
+  final String? displayName;
+  const AuthUser({required this.uid, required this.email, this.displayName});
+  factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
+    uid: json['uid'] as String? ?? json['_id'] as String? ?? '',
+    email: json['email'] as String? ?? '',
+    displayName: json['displayName'] as String?,
+  );
+}
+
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
+  final ApiClient _api = ApiClient.instance;
+  final StreamController<AuthUser?> _changes = StreamController<AuthUser?>.broadcast();
+  AuthUser? _currentUser;
+  AuthUser? get currentUser => _currentUser;
+  bool get isAuthenticated => _currentUser != null;
 
-  final UserService _userService = UserService.instance;
+  Stream<AuthUser?> get authStateChanges async* {
+    yield _currentUser;
+    yield* _changes.stream;
+  }
 
-  FirebaseAuth? get _auth {
+  Future<void> initialize() async {
+    await _api.initialize();
+    if (_api.token == null) return;
+    final cachedUser = await _api.readCachedUser();
+    if (cachedUser != null) _setUser(AuthUser.fromJson(cachedUser));
     try {
-      if (Firebase.apps.isNotEmpty) {
-        return FirebaseAuth.instance;
+      final response = await _api.get('/api/auth/me');
+      final user = response['user'] as Map<String, dynamic>;
+      await _api.cacheUser(user);
+      _setUser(AuthUser.fromJson(user));
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _api.setToken(null);
+        _setUser(null);
       }
-    } catch (_) {}
-    return null;
+    } catch (_) {
+      // Keep a valid local session when the API is temporarily unreachable.
+    }
   }
 
-  /// Stream of authentication state changes.
-  /// Emits the current [User] when signed in, or null when signed out.
-  Stream<User?> get authStateChanges =>
-      _auth?.authStateChanges() ?? const Stream<User?>.empty();
-
-  /// Returns the currently authenticated Firebase [User], or null if not signed in.
-  User? get currentUser => _auth?.currentUser;
-
-  /// Returns true if a user is currently signed in.
-  bool get isAuthenticated => currentUser != null;
-
-  /// Registers a new user with [email] and [password].
-  ///
-  /// Upon successful Firebase Auth registration:
-  /// 1. Updates the Firebase user's display name (if provided).
-  /// 2. Creates the corresponding Firestore document at `users/{uid}`.
-  /// 3. Returns the [UserCredential].
-  Future<UserCredential> registerWithEmailAndPassword({
-    required String email,
-    required String password,
-    String? displayName,
-  }) async {
-    final auth = _auth;
-    if (auth == null) {
-      throw FirebaseException(
-        plugin: 'firebase_auth',
-        code: 'not-initialized',
-        message: 'Firebase is not initialized.',
-      );
-    }
-
-    final cleanEmail = email.trim();
-    final cleanName = displayName?.trim();
-
-    final credential = await auth.createUserWithEmailAndPassword(
-      email: cleanEmail,
-      password: password,
-    );
-
-    final user = credential.user;
-    if (user != null) {
-      if (cleanName != null && cleanName.isNotEmpty) {
-        await user.updateDisplayName(cleanName);
-      }
-
-      // Create the user profile document in Firestore
-      await _userService.createUserProfile(
-        uid: user.uid,
-        email: user.email ?? cleanEmail,
-        displayName: cleanName,
-      );
-    }
-
-    return credential;
+  Future<AuthUser> registerWithEmailAndPassword({required String email, required String password, String? displayName}) async {
+    final response = await _api.post('/api/auth/register', authenticated: false, body: {
+      'email': email.trim(), 'password': password, if (displayName != null) 'displayName': displayName.trim(),
+    });
+    return _acceptSession(response);
   }
 
-  /// Signs in an existing user with [email] and [password].
-  Future<UserCredential> signInWithEmailAndPassword({
-    required String email,
-    required String password,
-  }) async {
-    final auth = _auth;
-    if (auth == null) {
-      throw FirebaseException(
-        plugin: 'firebase_auth',
-        code: 'not-initialized',
-        message: 'Firebase is not initialized.',
-      );
-    }
-
-    return await auth.signInWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
+  Future<AuthUser> signInWithEmailAndPassword({required String email, required String password}) async {
+    final response = await _api.post('/api/auth/login', authenticated: false, body: {'email': email.trim(), 'password': password});
+    return _acceptSession(response);
   }
 
-  /// Sends a password reset email to the specified [email].
+  Future<AuthUser> _acceptSession(Map<String, dynamic> response) async {
+    await _api.setToken(response['token'] as String?);
+    final userJson = response['user'] as Map<String, dynamic>;
+    await _api.cacheUser(userJson);
+    final user = AuthUser.fromJson(userJson);
+    _setUser(user);
+    await UserService.instance.refreshProfile();
+    return user;
+  }
+
+  void _setUser(AuthUser? user) {
+    _currentUser = user;
+    if (!_changes.isClosed) _changes.add(user);
+  }
+
   Future<void> sendPasswordResetEmail(String email) async {
-    final auth = _auth;
-    if (auth == null) {
-      throw FirebaseException(
-        plugin: 'firebase_auth',
-        code: 'not-initialized',
-        message: 'Firebase is not initialized.',
-      );
-    }
-
-    await auth.sendPasswordResetEmail(email: email.trim());
+    await _api.post('/api/auth/password-reset/request', authenticated: false, body: {'email': email.trim()});
   }
 
-  /// Signs out the currently authenticated user.
+  Future<void> confirmPasswordReset({required String email, required String token, required String newPassword}) async {
+    await _api.post('/api/auth/password-reset/confirm', authenticated: false, body: {
+      'email': email.trim(), 'token': token.trim(), 'newPassword': newPassword,
+    });
+  }
+
+  Future<void> updateDisplayName(String displayName) async {
+    final response = await _api.patch('/api/auth/me', body: {'displayName': displayName.trim()});
+    final user = response['user'] as Map<String, dynamic>;
+    await _api.cacheUser(user);
+    _setUser(AuthUser.fromJson(user));
+    await UserService.instance.refreshProfile();
+  }
+
+  Future<void> changePassword({required String currentPassword, required String newPassword}) async {
+    await _api.post('/api/auth/change-password', body: {'currentPassword': currentPassword, 'newPassword': newPassword});
+  }
+
   Future<void> signOut() async {
-    await _auth?.signOut();
+    try {
+      if (_api.token != null) await _api.post('/api/auth/logout');
+    } catch (_) {
+      // Always clear the device session, even when the server cannot be reached.
+    } finally {
+      await _api.setToken(null);
+      _setUser(null);
+      UserService.instance.clearProfile();
+    }
   }
 
-  /// Translates [FirebaseAuthException] and other errors into clean,
-  /// user-friendly error messages.
   static String getErrorMessage(dynamic error) {
-    if (error is FirebaseAuthException) {
+    if (error is ApiException) {
       switch (error.code) {
-        case 'invalid-email':
-          return 'The email address is not properly formatted.';
-        case 'user-disabled':
-          return 'This user account has been disabled.';
-        case 'user-not-found':
-          return 'No account found with this email.';
-        case 'wrong-password':
-          return 'Incorrect password. Please try again.';
-        case 'invalid-credential':
-          return 'Invalid email or password. Please check your credentials.';
-        case 'email-already-in-use':
-          return 'An account already exists with this email address.';
-        case 'operation-not-allowed':
-          return 'Email and password accounts are not enabled in Firebase Console.';
-        case 'weak-password':
-          return 'The password is too weak. Please use at least 6 characters.';
-        case 'network-request-failed':
-          return 'Network error. Please check your internet connection.';
-        case 'too-many-requests':
-          return 'Too many failed login attempts. Please try again later.';
-        case 'channel-error':
-          return 'Please provide both email and password.';
-        default:
-          return error.message ?? 'An authentication error occurred.';
+        case 'EMAIL_EXISTS': return 'An account already exists with this email address.';
+        case 'INVALID_CREDENTIALS': return 'Invalid email or password. Please check your credentials.';
+        case 'VALIDATION_ERROR': return error.message;
+        case 'RATE_LIMITED': return 'Too many attempts. Please try again later.';
+        case 'EMAIL_NOT_CONFIGURED': return 'Password reset is not configured on the server yet.';
+        case 'NETWORK_ERROR': return error.message;
+        default: return error.message;
       }
-    } else if (error is FirebaseException) {
-      return error.message ?? 'A database error occurred.';
     }
     return error?.toString() ?? 'An unexpected error occurred.';
   }

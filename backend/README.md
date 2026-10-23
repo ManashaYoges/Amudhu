@@ -1,106 +1,29 @@
-# Amudhu Smart Plate — Backend Server
+# Amudhu API server
 
-A secure, high-performance Node.js backend providing AI Vision food recognition and standardized nutritional analysis for the Amudhu Flutter application.
+Node.js and Express API for the Flutter app. MongoDB Atlas is configured only on the server; the backend always selects database `amudhu` when connecting.
 
-## Key Features
+## Run locally
 
-- **Real Vision AI Integration**: Connects to Google Gemini Vision (`gemini-1.5-flash` or `gemini-2.0-flash`) and OpenAI GPT-4o Vision to inspect actual meal photographs.
-- **Strict Anti-Hallucination Prompting**: Instructs the vision model to detect only visibly present foods, separate components (rice, dal, sambar, poriyal), and identify common South Indian, Indian, and international meals without guessing invisible ingredients.
-- **Standardized Food Composition Database**: Computes nutrition using verified cooked values per 100g:
-  $$\text{Nutrient} = \frac{\text{Nutrient per } 100\text{g} \times \text{estimated grams}}{100}$$
-- **Portion Estimation**: Realistic gram estimates based on visible plate area and standard serving references.
-- **Zero Mock Fallbacks**: Returns clear errors if the image cannot be analyzed or if API keys are missing, instead of faking results.
-
----
-
-## Quick Start
-
-### 1. Install Dependencies
-```bash
+```powershell
 cd backend
 npm install
+Copy-Item .env.example .env
+# Edit .env with MONGODB_URI and a random JWT_SECRET (32+ characters)
+npm run dev
 ```
 
-### 2. Configure Your API Key
-Open `.env` (or copy from `.env.example`) and add your Google Gemini API key:
-```env
-PORT=3000
-GEMINI_API_KEY=AIzaSy...your_gemini_key_here
-GEMINI_MODEL=gemini-1.5-flash
-AI_PROVIDER=gemini
-```
-> *Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com).*
+The process does not listen until MongoDB connects. It prints development URLs for desktop, Android emulator (`10.0.2.2`) and a physical Android phone (the computer’s LAN IPv4 address). For the phone, use that LAN address in the app and keep the devices on the same network.
 
-### 3. Start the Server
-```bash
-npm start
-```
-The server will start at:
-- Local desktop/browser: `http://localhost:3000`
-- Android Emulator: `http://10.0.2.2:3000`
-- Physical phone: `http://<your-computer-ip>:3000`
+## Security configuration
 
----
+Required: `MONGODB_URI`, `JWT_SECRET`, and optionally `PORT`. Use an Atlas database user with read/write access scoped to `amudhu`; allow-list only required client/server IPs in Atlas. Never put the URI, JWT secret, SMTP credentials or AI keys in Flutter or source control.
 
-## API Endpoints
+Password reset remains disabled until a working SMTP provider and `MAIL_FROM` are configured. The API returns an explicit configuration error when reset mail is not enabled. Auth endpoints are rate limited; passwords are bcrypt-hashed and reset tokens are SHA-256 hashed with one-time use and a 30-minute expiry.
 
-### 1. `GET /api/health`
-Checks server status and whether the AI API key is configured.
-```json
-{
-  "status": "online",
-  "service": "Amudhu Smart Plate AI Vision Server",
-  "provider": "gemini",
-  "apiKeyConfigured": true,
-  "foodCatalogCount": 38
-}
-```
+## Tests and API reference
 
-### 2. `POST /api/analyze-plate`
-Accepts `multipart/form-data` with `image` file or JSON body with `{"image": "<base64>"}`.
+- `npm test`: API/auth/ownership tests with mocked persistence.
+- `npm run test:analyze`: existing meal nutrition analysis tests.
+- `API.md`: endpoint contract, authentication and current demo endpoint behavior.
 
-**Response format:**
-```json
-{
-  "success": true,
-  "isFood": true,
-  "mealName": "Steamed Rice with Dal and Poriyal",
-  "foods": [
-    {
-      "name": "Cooked white rice",
-      "quantity": "180 g",
-      "calories": 234,
-      "protein": 4.9,
-      "carbs": 50.8,
-      "fat": 0.5,
-      "fiber": 0.7,
-      "sugar": 0.2,
-      "emoji": "🍚",
-      "confidence": 0.92,
-      "estimatedGrams": 180,
-      "portionIsEstimated": true,
-      "alternatives": ["Brown rice"],
-      "notes": null
-    }
-  ],
-  "total": {
-    "calories": 420,
-    "protein": 14.2,
-    "carbs": 68.5,
-    "fat": 6.8,
-    "fiber": 7.4,
-    "sugar": 3.2
-  },
-  "balance": {
-    "score": 82,
-    "status": "Well Balanced!",
-    "tip": "Adding raw salad or steamed greens will boost fiber further.",
-    "amudhuNote": "Approximate nutritional balance indicator based on detected foods and portions. Not a medical assessment."
-  },
-  "analysisSource": "real_ai",
-  "isEstimate": true
-}
-```
-
-### 3. `POST /api/recalculate`
-Recalculates meal totals when the user adjusts portions or adds/removes foods.
+Run an actual database connectivity check with `GET /api/health` after configuring Atlas; it reports `database: connected` only when the live connection is established.

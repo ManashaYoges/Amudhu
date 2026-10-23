@@ -48,4 +48,9 @@ app.*.map.json
 .env
 *.env
 backend/.env
+backend/node_modules/
+backend/.cache/
+**/.env
+**/.env.*
+!**/.env.example
 

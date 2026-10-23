@@ -1,13 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'firebase_options.dart';
 import 'models/food_analysis_result.dart';
 import 'models/fridge_recipe_models.dart';
 import 'models/user_profile.dart';
 import 'services/auth_service.dart';
+import 'services/api_client.dart';
 import 'services/user_service.dart';
 import 'services/food_analysis_service.dart';
 import 'services/fridge_analysis_service.dart';
@@ -19,9 +17,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await AuthService.instance.initialize();
+  if (AuthService.instance.isAuthenticated) {
+    try { await MealStorageService.instance.loadMeals(); } catch (_) {}
+  }
   runApp(const AmuduApp());
 }
 
@@ -78,6 +77,10 @@ class _WelcomeGateState extends State<WelcomeGate> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
 
+  Future<void> _loadSavedMeals() async {
+    try { await MealStorageService.instance.loadMeals(); } catch (_) {}
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -101,6 +104,7 @@ class _WelcomeGateState extends State<WelcomeGate> {
         email: email,
         password: password,
       );
+      await _loadSavedMeals();
       if (mounted) {
         _message(context, 'Welcome back!');
       }
@@ -125,8 +129,8 @@ class _WelcomeGateState extends State<WelcomeGate> {
       return;
     }
 
-    if (password.length < 6) {
-      _message(context, 'Password must be at least 6 characters.');
+    if (password.length < 8) {
+      _message(context, 'Password must be at least 8 characters.');
       return;
     }
 
@@ -137,6 +141,7 @@ class _WelcomeGateState extends State<WelcomeGate> {
         password: password,
         displayName: name.isNotEmpty ? name : null,
       );
+      await _loadSavedMeals();
       if (mounted) {
         _message(context, 'Account created successfully! Welcome to Amudhu.');
       }
@@ -161,7 +166,8 @@ class _WelcomeGateState extends State<WelcomeGate> {
     try {
       await AuthService.instance.sendPasswordResetEmail(email);
       if (mounted) {
-        _message(context, 'Password reset link sent to $email');
+        _message(context, 'If an account exists, reset instructions have been sent.');
+        await _showResetCompletionDialog(email);
       }
     } catch (e) {
       if (mounted) {
@@ -170,9 +176,44 @@ class _WelcomeGateState extends State<WelcomeGate> {
     }
   }
 
+  Future<void> _showResetCompletionDialog(String email) async {
+    final token = TextEditingController();
+    final password = TextEditingController();
+    try {
+      final values = await showDialog<List<String>>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Reset your password'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Paste the one-time code from your reset email and choose a new password.'),
+            const SizedBox(height: 12),
+            TextField(controller: token, decoration: const InputDecoration(labelText: 'Reset code')),
+            TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: 'New password (8+ characters)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, [token.text, password.text]), child: const Text('Update password')),
+          ],
+        ),
+      );
+      if (values == null) return;
+      if (values[0].trim().isEmpty || values[1].length < 8) {
+        if (mounted) _message(context, 'Enter the reset code and a password of at least 8 characters.');
+        return;
+      }
+      await AuthService.instance.confirmPasswordReset(email: email, token: values[0], newPassword: values[1]);
+      if (mounted) _message(context, 'Password updated. You can now sign in.');
+    } catch (e) {
+      if (mounted) _message(context, AuthService.getErrorMessage(e));
+    } finally {
+      token.dispose();
+      password.dispose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
+    return StreamBuilder<AuthUser?>(
       stream: AuthService.instance.authStateChanges,
       builder: (context, snapshot) {
         final user = snapshot.data;
@@ -243,7 +284,7 @@ class _WelcomeGateState extends State<WelcomeGate> {
                       controller: _passwordController,
                       enabled: !_isLoading,
                       icon: Icons.lock_outline,
-                      label: _isSignUp ? 'Password (min. 6 characters)' : 'Password',
+                      label: _isSignUp ? 'Password (min. 8 characters)' : 'Password',
                       obscure: true,
                     ),
                     if (!_isSignUp)
@@ -390,11 +431,11 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = AuthService.instance.currentUser;
-    final userName = (user?.displayName != null && user!.displayName!.isNotEmpty)
-        ? user.displayName!
-        : (user?.email != null && user!.email!.contains('@')
-            ? user.email!.split('@').first
-            : 'Ananya');
+    final userName = user == null
+        ? 'Ananya'
+        : (user.displayName?.isNotEmpty == true
+            ? user.displayName!
+            : (user.email.contains('@') ? user.email.split('@').first : 'Ananya'));
     final initial = userName.isNotEmpty ? userName[0].toUpperCase() : 'A';
 
     return ScreenScroll(
@@ -844,13 +885,17 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
   }
 
   Future<void> _saveMeal(FoodAnalysisResult result) async {
-    final saved = await MealStorageService.instance.saveMeal(result);
-    if (!mounted) return;
-    if (saved) {
-      _message(context, '${result.mealName} saved to your history!');
-      setState(() {});
-    } else {
-      _message(context, 'This meal is already saved in your history.');
+    try {
+      final saved = await MealStorageService.instance.saveMeal(result);
+      if (!mounted) return;
+      if (saved) {
+        _message(context, '${result.mealName} saved to your history!');
+        setState(() {});
+      } else {
+        _message(context, 'This meal is already saved in your history.');
+      }
+    } catch (error) {
+      if (mounted) _message(context, AuthService.getErrorMessage(error));
     }
   }
 
@@ -1403,6 +1448,7 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
                                   testStatus = 'Testing connection…';
                                 });
                                 FoodAnalysisService.activeBackendUrl = urlController.text.trim();
+                                ApiClient.baseUrlOverride = urlController.text.trim();
                                 final health = await _analysisService.checkBackendHealth();
                                 setModalState(() {
                                   isTesting = false;
@@ -1426,6 +1472,7 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
                         style: filledStyle,
                         onPressed: () {
                           FoodAnalysisService.activeBackendUrl = urlController.text.trim();
+                          ApiClient.baseUrlOverride = urlController.text.trim();
                           Navigator.pop(ctx);
                           _message(context, 'Backend URL updated to ${urlController.text.trim()}');
                         },
@@ -2203,7 +2250,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(.04),
+                      color: Colors.black.withValues(alpha: .04),
                       blurRadius: 10,
                     ),
                   ],
@@ -2289,7 +2336,6 @@ class ProfileScreen extends StatelessWidget {
   Future<void> _showEditProfileDialog(
     BuildContext context,
     String currentName,
-    String uid,
   ) async {
     final textController = TextEditingController(text: currentName);
     final result = await showDialog<String>(
@@ -2320,11 +2366,7 @@ class ProfileScreen extends StatelessWidget {
 
     if (result != null && result.isNotEmpty && context.mounted) {
       try {
-        await UserService.instance.updateUserProfile(
-          uid: uid,
-          displayName: result,
-        );
-        await AuthService.instance.currentUser?.updateDisplayName(result);
+        await AuthService.instance.updateDisplayName(result);
         if (context.mounted) {
           _message(context, 'Profile updated successfully!');
         }
@@ -2351,10 +2393,8 @@ class ProfileScreen extends StatelessWidget {
             stream: UserService.instance.streamUserProfile(user.uid),
             builder: (context, snapshot) {
               final profile = snapshot.data;
-              final displayName = profile?.displayName ??
-                  user.displayName ??
-                  (user.email != null ? user.email!.split('@').first : 'User');
-              final email = profile?.email ?? user.email ?? 'No email';
+              final displayName = profile?.displayName ?? user.displayName ?? user.email.split('@').first;
+              final email = profile?.email ?? user.email;
               final initial = displayName.isNotEmpty
                   ? displayName[0].toUpperCase()
                   : 'U';
@@ -2394,7 +2434,6 @@ class ProfileScreen extends StatelessWidget {
                       onPressed: () => _showEditProfileDialog(
                         context,
                         displayName,
-                        user.uid,
                       ),
                       icon: const Icon(Icons.edit_outlined),
                     ),
@@ -4010,7 +4049,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(.04),
+            color: Colors.black.withValues(alpha: .04),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -4767,7 +4806,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
           border: Border.all(color: const Color(0xFFF0F0EA)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(.03),
+              color: Colors.black.withValues(alpha: .03),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -4797,7 +4836,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(.75),
+                        color: Colors.black.withValues(alpha: .75),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -4926,24 +4965,24 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Settings')),
-    body: ScreenScroll(
+    body: const ScreenScroll(
       children: [
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.notifications_outlined,
           title: 'Meal reminders',
           value: 'On',
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.water_drop_outlined,
           title: 'Hydration reminders',
           value: 'On',
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.straighten,
           title: 'Units',
           value: 'Metric',
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.privacy_tip_outlined,
           title: 'Privacy policy',
           value: 'View',
@@ -5035,7 +5074,7 @@ class CardBox extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(.045),
+          color: Colors.black.withValues(alpha: .045),
           blurRadius: 15,
           offset: const Offset(0, 4),
         ),
@@ -5121,7 +5160,7 @@ class QuickTile extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(.04), blurRadius: 10),
+          BoxShadow(color: Colors.black.withValues(alpha: .04), blurRadius: 10),
         ],
       ),
       child: Row(

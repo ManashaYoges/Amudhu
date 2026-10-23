@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import '../models/food_analysis_result.dart';
-import 'nutrition_database_service.dart';
+import 'api_client.dart';
 
 /// Exception thrown when food analysis fails.
 class FoodAnalysisException implements Exception {
@@ -24,23 +23,10 @@ class FoodAnalysisService {
   /// Default backend URL.
   /// On Android emulator, '10.0.2.2' maps to the host machine's 'localhost'.
   /// On Windows desktop, macOS, iOS simulator, or Web, 'localhost' is used.
-  static String get defaultBackendUrl {
-    // Check if overridden via dart-define
-    const envUrl = String.fromEnvironment('AI_BACKEND_URL');
-    if (envUrl.isNotEmpty) return envUrl;
-
-    if (!kIsWeb && Platform.isAndroid) {
-      return 'http://10.0.2.2:3000';
-    }
-    return 'http://localhost:3000';
-  }
+  static String get defaultBackendUrl => ApiClient.baseUrl;
 
   /// Active backend base URL (can be customized by user/developer in settings)
   static String activeBackendUrl = defaultBackendUrl;
-
-  /// Optional client-side Gemini API key supplied via --dart-define=GEMINI_API_KEY=...
-  /// Keeping credentials server-side is the recommended secure pattern.
-  static const String directGeminiApiKey = String.fromEnvironment('GEMINI_API_KEY');
 
   /// Checks if the backend server is reachable and configured
   Future<Map<String, dynamic>> checkBackendHealth() async {
@@ -73,12 +59,7 @@ class FoodAnalysisService {
       );
     }
 
-    // 2. Perform real vision recognition via backend (or direct Gemini if configured)
-    if (directGeminiApiKey.isNotEmpty) {
-      return _performDirectGeminiAnalysis(image);
-    } else {
-      return _performBackendAnalysis(image);
-    }
+    return _performBackendAnalysis(image);
   }
 
   /// Real Backend Vision Analysis
@@ -163,136 +144,6 @@ class FoodAnalysisService {
         "Could not analyze meal: ${e.toString()}",
         e,
       );
-    }
-  }
-
-  /// Direct Gemini Vision inference when configured with GEMINI_API_KEY
-  Future<FoodAnalysisResult> _performDirectGeminiAnalysis(File image) async {
-    const model = 'gemini-1.5-flash';
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$directGeminiApiKey',
-    );
-
-    try {
-      final imageBytes = await image.readAsBytes();
-      final base64Image = base64Encode(imageBytes);
-
-      final ext = image.path.split('.').last.toLowerCase();
-      String mime = 'image/jpeg';
-      if (ext == 'png') mime = 'image/png';
-      if (ext == 'webp') mime = 'image/webp';
-
-      const prompt = '''
-You are an expert food recognition AI for Amudhu Smart Plate.
-Inspect this photograph of a meal and identify only the visibly present foods with realistic portion estimates.
-Carefully recognize South Indian, Indian (rice, sambar, rasam, dal, poriyal, idli, dosa, chapati, curries, etc.) and global foods.
-Never hallucinate or guess invisible ingredients, oils, or spices.
-For distinct items, list them separately.
-For mixed dishes, identify the dish.
-Return strictly a JSON object:
-{
-  "isFood": true,
-  "mealName": "Name of meal",
-  "foods": [
-    {
-      "name": "Food name",
-      "confidence": 0.90,
-      "estimatedGrams": 180,
-      "alternatives": [],
-      "notes": null
-    }
-  ],
-  "uncertaintyNotes": null
-}
-''';
-
-      final payload = jsonEncode({
-        'contents': [
-          {
-            'parts': [
-              {'text': prompt},
-              {
-                'inlineData': {
-                  'mimeType': mime,
-                  'data': base64Image,
-                }
-              }
-            ]
-          }
-        ],
-        'generationConfig': {
-          'temperature': 0.1,
-          'responseMimeType': 'application/json',
-        }
-      });
-
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: payload,
-      ).timeout(const Duration(seconds: 35));
-
-      if (response.statusCode != 200) {
-        throw FoodAnalysisException('Gemini API returned code ${response.statusCode}: ${response.body}');
-      }
-
-      final resJson = jsonDecode(response.body);
-      final rawText = resJson['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
-      if (rawText == null || rawText.isEmpty) {
-        throw const FoodAnalysisException("No response received from vision model.");
-      }
-
-      String cleaned = rawText.trim();
-      if (cleaned.startsWith('```json')) {
-        cleaned = cleaned.replaceFirst(RegExp(r'^```json\s*'), '').replaceFirst(RegExp(r'\s*```$'), '');
-      } else if (cleaned.startsWith('```')) {
-        cleaned = cleaned.replaceFirst(RegExp(r'^```\s*'), '').replaceFirst(RegExp(r'\s*```$'), '');
-      }
-
-      final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
-      if (parsed['isFood'] == false) {
-        throw const FoodAnalysisException("No visible food detected in this photo. Please upload a clear photo of a meal.");
-      }
-
-      final rawFoods = parsed['foods'] as List<dynamic>? ?? [];
-      final calculatedFoods = <FoodItem>[];
-
-      for (final f in rawFoods) {
-        final itemMap = f as Map<String, dynamic>;
-        final name = itemMap['name'] as String? ?? 'Cooked food';
-        final grams = (itemMap['estimatedGrams'] as num?)?.toDouble() ?? 100.0;
-        final conf = (itemMap['confidence'] as num?)?.toDouble() ?? 0.85;
-        final alts = (itemMap['alternatives'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? <String>[];
-        final notes = itemMap['notes'] as String?;
-
-        final item = NutritionDatabaseService.instance.calculateFoodItem(
-          name: name,
-          grams: grams,
-          confidence: conf,
-          alternatives: alts,
-          notes: notes,
-        );
-        calculatedFoods.add(item);
-      }
-
-      final total = FoodAnalysisResult.calculateTotal(calculatedFoods);
-      final balance = FoodAnalysisResult.calculateBalance(total, calculatedFoods);
-
-      return FoodAnalysisResult(
-        mealName: parsed['mealName'] as String? ?? 'Identified Meal',
-        foods: calculatedFoods,
-        total: total,
-        balance: balance,
-        vitaminsAndMinerals: FoodAnalysisResult.defaultVitamins,
-        timestamp: DateTime.now(),
-        imagePath: image.path,
-        analysisSource: 'real_ai',
-        isEstimate: true,
-        uncertaintyNotes: parsed['uncertaintyNotes'] as String?,
-      );
-    } catch (e) {
-      if (e is FoodAnalysisException) rethrow;
-      throw FoodAnalysisException("Direct AI vision analysis failed: $e", e);
     }
   }
 
