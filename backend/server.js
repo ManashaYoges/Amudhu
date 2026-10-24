@@ -18,6 +18,13 @@ async function start() {
     throw new Error('JWT_SECRET must contain at least 32 characters');
   }
 
+  app.listen(port, () => {
+    console.log(`Amudhu API listening on port ${port}`);
+    console.log(`Desktop: http://localhost:${port}`);
+    console.log(`Android emulator: http://10.0.2.2:${port}`);
+    console.log(`Physical Android phone: http://${localAddress()}:${port}`);
+  });
+
   try {
     await connectDatabase();
     console.log('[Database] Connected to MongoDB Atlas successfully.');
@@ -31,13 +38,6 @@ async function start() {
       } catch (_) {}
     }, 15000);
   }
-
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`Amudhu API listening on port ${port}`);
-    console.log(`Desktop: http://localhost:${port}`);
-    console.log(`Android emulator: http://10.0.2.2:${port}`);
-    console.log(`Physical Android phone: http://${localAddress()}:${port}`);
-  });
 }
 
 if (require.main === module) {
