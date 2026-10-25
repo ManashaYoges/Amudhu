@@ -31,7 +31,7 @@ const upload = multer({
   },
 });
 
-app.get(['/health', '/api/health'], (req, res) => res.json({
+app.get(['/', '/health', '/api/health'], (req, res) => res.json({
   status: 'online', service: 'Amudhu API', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
   provider: process.env.GEMINI_API_KEY ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'smart_local',
   apiKeyConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY),

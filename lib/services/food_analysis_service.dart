@@ -20,18 +20,20 @@ class FoodAnalysisException implements Exception {
 /// Service responsible for analyzing meal images using real AI Vision.
 /// Connects securely to the Amudhu backend or configured vision endpoint.
 class FoodAnalysisService {
-  /// Default backend URL.
-  /// On Android emulator, '10.0.2.2' maps to the host machine's 'localhost'.
-  /// On Windows desktop, macOS, iOS simulator, or Web, 'localhost' is used.
+  /// Default backend URL (synced with ApiClient).
   static String get defaultBackendUrl => ApiClient.baseUrl;
 
-  /// Active backend base URL (can be customized by user/developer in settings)
-  static String activeBackendUrl = defaultBackendUrl;
+  /// Active backend base URL (always synced with ApiClient)
+  static String get activeBackendUrl => ApiClient.baseUrl;
+  static set activeBackendUrl(String value) => ApiClient.baseUrlOverride = value;
 
   /// Checks if the backend server is reachable and configured
-  Future<Map<String, dynamic>> checkBackendHealth() async {
+  Future<Map<String, dynamic>> checkBackendHealth([String? urlOverride]) async {
+    final target = (urlOverride != null && urlOverride.trim().isNotEmpty)
+        ? urlOverride.trim().replaceFirst(RegExp(r'/$'), '')
+        : activeBackendUrl;
     try {
-      final uri = Uri.parse('$activeBackendUrl/api/health');
+      final uri = Uri.parse('$target/api/health');
       final res = await http.get(uri).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         return jsonDecode(res.body) as Map<String, dynamic>;
@@ -125,12 +127,12 @@ class FoodAnalysisService {
     } on SocketException catch (e) {
       throw FoodAnalysisException(
         "Cannot connect to the AI Vision backend at $activeBackendUrl.\n\n"
-        "Make sure the backend is running (`cd backend && npm start`), or update the backend address in settings.",
+        "Make sure the backend is running and reachable, or update the backend address in settings.",
         e,
       );
     } on TimeoutException catch (e) {
       throw FoodAnalysisException(
-        "Vision analysis timed out. Please check your network connection and try again.",
+        "Vision analysis timed out after 35s. Please check your connection to $activeBackendUrl and try again.",
         e,
       );
     } on FormatException catch (e) {

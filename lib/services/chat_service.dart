@@ -142,8 +142,8 @@ class ChatService extends ChangeNotifier {
       if (error.code == 'RATE_LIMIT_EXCEEDED') {
         return 'Amudhu is receiving many requests. Please wait a moment and try again.';
       }
-      if (error.code == 'GATEWAY_TIMEOUT') {
-        return 'Request to Amudhu timed out. Please tap retry to try again.';
+      if (error.code == 'TIMEOUT' || error.code == 'GATEWAY_TIMEOUT') {
+        return 'Request to Amudhu timed out. Please tap retry to try again or check your backend URL.';
       }
       if (error.code == 'NETWORK_ERROR' || error.statusCode == 0) {
         return 'Cannot connect to Amudhu API. Please verify your backend server is running and check your network connection.';

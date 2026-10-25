@@ -20,6 +20,7 @@ import 'services/chat_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await ApiClient.instance.initialize();
   await AuthService.instance.initialize();
   if (AuthService.instance.isAuthenticated) {
     try { await MealStorageService.instance.loadMeals(); } catch (_) {}
@@ -236,7 +237,25 @@ class _WelcomeGateState extends State<WelcomeGate> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const SizedBox(height: 22),
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: TextButton.icon(
+                        onPressed: () => showBackendSettingsModal(context, onUrlUpdated: () {
+                          setState(() {});
+                        }),
+                        icon: const Icon(Icons.hub_outlined, size: 16, color: deepGreen),
+                        label: Text(
+                          ApiClient.baseUrl.replaceFirst(RegExp(r'^https?://'), ''),
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: deepGreen),
+                        ),
+                        style: TextButton.styleFrom(
+                          backgroundColor: mint,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     const BrandMark(size: 76),
                     const SizedBox(height: 12),
                     const Text(
@@ -338,6 +357,33 @@ class _WelcomeGateState extends State<WelcomeGate> {
                           : () => setState(() => _guestEntered = true),
                       child: const Text('Continue as guest'),
                     ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.circle, size: 8, color: green),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Server: ${ApiClient.baseUrl}',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        ),
+                        const SizedBox(width: 4),
+                        InkWell(
+                          onTap: () => showBackendSettingsModal(context, onUrlUpdated: () {
+                            setState(() {});
+                          }),
+                          child: const Text(
+                            'Configure',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: green,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 28),
                     const Text('A little more mindful, one meal at a time 🌿'),
                   ],
@@ -363,6 +409,179 @@ ButtonStyle get outlineStyle => OutlinedButton.styleFrom(
 );
 void _message(BuildContext c, String s) =>
     ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(s)));
+
+void showBackendSettingsModal(BuildContext context, {VoidCallback? onUrlUpdated}) {
+  final urlController = TextEditingController(text: ApiClient.baseUrl);
+  String? testStatus;
+  bool isTesting = false;
+  final analysisService = FoodAnalysisService();
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    backgroundColor: canvas,
+    builder: (ctx) => StatefulBuilder(
+      builder: (modalCtx, setModalState) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 18,
+            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 18,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Row(
+                children: [
+                  Icon(Icons.hub_outlined, color: deepGreen),
+                  SizedBox(width: 8),
+                  Text(
+                    'AI Backend Connection',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: ink,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Amudhu connects securely to your local or hosted AI server.',
+                style: TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Backend Base URL',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: urlController,
+                decoration: InputDecoration(
+                  hintText: 'http://localhost:3000 or http://10.0.2.2:3000',
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ActionChip(
+                    label: const Text('Localhost / USB', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      setModalState(() {
+                        urlController.text = 'http://localhost:3000';
+                      });
+                    },
+                  ),
+                  ActionChip(
+                    label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      setModalState(() {
+                        urlController.text = 'http://10.0.2.2:3000';
+                      });
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (testStatus != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: testStatus!.contains('Connected') ? mint : const Color(0xFFFDE8E8),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    testStatus!,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: testStatus!.contains('Connected') ? deepGreen : const Color(0xFF9B1C1C),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: outlineStyle,
+                      onPressed: isTesting
+                          ? null
+                          : () async {
+                              setModalState(() {
+                                isTesting = true;
+                                testStatus = 'Testing connection…';
+                              });
+                              final targetUrl = urlController.text.trim();
+                              final health = await analysisService.checkBackendHealth(targetUrl);
+                              setModalState(() {
+                                isTesting = false;
+                                if (health['status'] == 'online') {
+                                  final hasKey = health['apiKeyConfigured'] == true;
+                                  testStatus = "Connected! Server is online.\nDatabase: ${health['database'] ?? 'connected'}\nEngine: ${hasKey ? 'Live Google Gemini Vision' : 'Smart Local Nutrition Engine'}";
+                                } else {
+                                  testStatus = "Failed to connect (${health['error'] ?? health['status'] ?? 'offline'}).\nCheck if server is running at $targetUrl";
+                                }
+                              });
+                            },
+                      icon: isTesting
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.wifi_tethering),
+                      label: const Text('Test Connection'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      style: filledStyle,
+                      onPressed: () async {
+                        final newUrl = urlController.text.trim();
+                        await ApiClient.saveBaseUrl(newUrl);
+                        onUrlUpdated?.call();
+                        if (context.mounted) {
+                          Navigator.pop(ctx);
+                          _message(context, 'Backend URL saved: $newUrl');
+                        }
+                      },
+                      child: const Text('Save URL'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 class MainShell extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -1345,152 +1564,7 @@ class _SmartPlateScreenState extends State<SmartPlateScreen> {
     );
   }
 
-  void _showBackendSettingsModal() {
-    final urlController = TextEditingController(text: FoodAnalysisService.activeBackendUrl);
-    String? testStatus;
-    bool isTesting = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      backgroundColor: canvas,
-      builder: (ctx) => StatefulBuilder(
-        builder: (modalCtx, setModalState) => SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 18,
-              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 18,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Row(
-                  children: [
-                    Icon(Icons.hub_outlined, color: deepGreen),
-                    SizedBox(width: 8),
-                    Text(
-                      'AI Backend Connection',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: ink,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Amudhu connects securely to your local or hosted AI Vision server.',
-                  style: TextStyle(fontSize: 12),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Backend Base URL',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: urlController,
-                  decoration: InputDecoration(
-                    hintText: 'http://localhost:3000 or http://10.0.2.2:3000',
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (testStatus != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: testStatus!.contains('Connected') ? mint : const Color(0xFFFDE8E8),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      testStatus!,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: testStatus!.contains('Connected') ? deepGreen : const Color(0xFF9B1C1C),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: outlineStyle,
-                        onPressed: isTesting
-                            ? null
-                            : () async {
-                                setModalState(() {
-                                  isTesting = true;
-                                  testStatus = 'Testing connection…';
-                                });
-                                FoodAnalysisService.activeBackendUrl = urlController.text.trim();
-                                ApiClient.baseUrlOverride = urlController.text.trim();
-                                final health = await _analysisService.checkBackendHealth();
-                                setModalState(() {
-                                  isTesting = false;
-                                  if (health['status'] == 'online') {
-                                    final hasKey = health['apiKeyConfigured'] == true;
-                                    testStatus = 'Connected! Server is online.\nEngine: ${hasKey ? "Live Google Gemini Vision" : "Smart Local Nutrition Engine"}';
-                                  } else {
-                                    testStatus = 'Failed to connect. Check if server is running at ${urlController.text.trim()}';
-                                  }
-                                });
-                              },
-                        icon: isTesting
-                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.wifi_tethering),
-                        label: const Text('Test Connection'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        style: filledStyle,
-                        onPressed: () {
-                          FoodAnalysisService.activeBackendUrl = urlController.text.trim();
-                          ApiClient.baseUrlOverride = urlController.text.trim();
-                          Navigator.pop(ctx);
-                          _message(context, 'Backend URL updated to ${urlController.text.trim()}');
-                        },
-                        child: const Text('Save URL'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  void _showBackendSettingsModal() => showBackendSettingsModal(context, onUrlUpdated: () => setState(() {}));
 
   void _showImageSourceModal() {
     showModalBottomSheet(
@@ -5421,24 +5495,30 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Settings')),
-    body: const ScreenScroll(
+    body: ScreenScroll(
       children: [
         SettingsRow(
+          icon: Icons.hub_outlined,
+          title: 'AI Backend Server',
+          value: ApiClient.baseUrl,
+          onTap: () => showBackendSettingsModal(context),
+        ),
+        const SettingsRow(
           icon: Icons.notifications_outlined,
           title: 'Meal reminders',
           value: 'On',
         ),
-        SettingsRow(
+        const SettingsRow(
           icon: Icons.water_drop_outlined,
           title: 'Hydration reminders',
           value: 'On',
         ),
-        SettingsRow(
+        const SettingsRow(
           icon: Icons.straighten,
           title: 'Units',
           value: 'Metric',
         ),
-        SettingsRow(
+        const SettingsRow(
           icon: Icons.privacy_tip_outlined,
           title: 'Privacy policy',
           value: 'View',

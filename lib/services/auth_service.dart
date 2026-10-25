@@ -112,6 +112,8 @@ class AuthService {
   static String getErrorMessage(dynamic error) {
     if (error is ApiException) {
       switch (error.code) {
+        case 'TIMEOUT': return 'Server connection timed out (30s). Tap the Server icon at the top to check or change the server URL.';
+        case 'GATEWAY_TIMEOUT': return 'Request timed out on the server. Please try again.';
         case 'EMAIL_EXISTS': return 'An account already exists with this email address.';
         case 'INVALID_CREDENTIALS': return 'Invalid email or password. Please check your credentials.';
         case 'VALIDATION_ERROR': return error.message;
