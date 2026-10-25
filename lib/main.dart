@@ -3052,6 +3052,16 @@ class ProfileScreen extends StatelessWidget {
               ),
               const Divider(height: 20),
               SettingsRow(
+                icon: Icons.bookmark_outline,
+                title: 'Saved recipes',
+                value: 'View',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SavedRecipesScreen()),
+                ),
+              ),
+              const Divider(height: 20),
+              SettingsRow(
                 icon: Icons.settings_outlined,
                 title: 'Settings & reminders',
                 value: 'Manage',
@@ -3377,6 +3387,14 @@ class _FridgeScreenState extends State<FridgeScreen> {
     appBar: AppBar(
       title: const Text('Smart Fridge'),
       actions: [
+        IconButton(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const RecipeScreen()),
+          ),
+          icon: const Icon(Icons.search, color: deepGreen),
+          tooltip: 'Search Recipes',
+        ),
         IconButton(
           onPressed: () => showBackendSettingsModal(context, onUrlUpdated: () => setState(() {})),
           icon: const Icon(Icons.hub_outlined, color: deepGreen),
@@ -3938,16 +3956,74 @@ String _getCuisineEmoji(String cuisine) {
   return '🍲';
 }
 
-class RecipeDetailScreen extends StatelessWidget {
+class RecipeDetailScreen extends StatefulWidget {
   final Recipe recipe;
   const RecipeDetailScreen({super.key, required this.recipe});
 
   @override
+  State<RecipeDetailScreen> createState() => _RecipeDetailScreenState();
+}
+
+class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
+  late bool _isSaved;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _isSaved = RecipeSearchService.instance.isFavorite(widget.recipe.id);
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    if (_isSaved) {
+      await RecipeSearchService.instance.removeFavorite(widget.recipe.id);
+      if (!mounted) return;
+      setState(() {
+        _isSaved = false;
+        _isSaving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.recipe.name} removed from favorites'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } else {
+      await RecipeSearchService.instance.saveFavorite(widget.recipe);
+      if (!mounted) return;
+      setState(() {
+        _isSaved = true;
+        _isSaving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.recipe.name} saved to favorites!'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final recipe = widget.recipe;
     return Scaffold(
       appBar: AppBar(
         title: Text(recipe.name),
         backgroundColor: canvas,
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isSaved ? Icons.bookmark : Icons.bookmark_border,
+              color: _isSaved ? deepGreen : ink,
+            ),
+            tooltip: _isSaved ? 'Remove from favorites' : 'Save to favorites',
+            onPressed: _isSaving ? null : _toggleFavorite,
+          ),
+        ],
       ),
       body: ScreenScroll(
         children: [
@@ -4345,13 +4421,34 @@ class RecipeDetailScreen extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _message(
-                context,
-                '${recipe.name} saved to your favorite recipes!',
+              onPressed: _isSaving ? null : _toggleFavorite,
+              style: _isSaved
+                  ? OutlinedButton.styleFrom(
+                      foregroundColor: deepGreen,
+                      side: const BorderSide(color: deepGreen, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    )
+                  : outlineStyle,
+              icon: _isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: deepGreen),
+                    )
+                  : Icon(
+                      _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                      color: _isSaved ? deepGreen : null,
+                    ),
+              label: Text(
+                _isSaved ? 'Saved in favorites' : 'Save recipe',
+                style: TextStyle(
+                  color: _isSaved ? deepGreen : null,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-              style: outlineStyle,
-              icon: const Icon(Icons.bookmark_border),
-              label: const Text('Save recipe'),
             ),
           ),
           const SizedBox(height: 12),
@@ -4395,6 +4492,200 @@ class RecipeDetailScreen extends StatelessWidget {
           style: const TextStyle(fontSize: 10, color: Color(0xFF687067)),
         ),
       ],
+    );
+  }
+}
+
+class SavedRecipesScreen extends StatefulWidget {
+  const SavedRecipesScreen({super.key});
+
+  @override
+  State<SavedRecipesScreen> createState() => _SavedRecipesScreenState();
+}
+
+class _SavedRecipesScreenState extends State<SavedRecipesScreen> {
+  bool _isLoading = true;
+  List<Recipe> _favorites = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFavorites();
+  }
+
+  Future<void> _loadFavorites() async {
+    setState(() => _isLoading = true);
+    final list = await RecipeSearchService.instance.getFavorites();
+    if (!mounted) return;
+    setState(() {
+      _favorites = list;
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _remove(String id, String name) async {
+    await RecipeSearchService.instance.removeFavorite(id);
+    _loadFavorites();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$name removed from favorites'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Saved Recipes'),
+        backgroundColor: canvas,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: deepGreen),
+            tooltip: 'Refresh',
+            onPressed: _loadFavorites,
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: green),
+            )
+          : _favorites.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('📑', style: TextStyle(fontSize: 48)),
+                        SizedBox(height: 12),
+                        Text(
+                          'No saved recipes yet',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: ink,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Tap the bookmark icon on any recipe to save it here for quick access.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: Color(0xFF687067)),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ScreenScroll(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${_favorites.length} saved recipes',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: deepGreen,
+                          ),
+                        ),
+                        Text(
+                          'Synced with MongoDB',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ..._favorites.map(
+                      (r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Dismissible(
+                          key: Key('fav_${r.id}'),
+                          direction: DismissDirection.endToStart,
+                          background: Container(
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 20),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade400,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Icon(Icons.delete, color: Colors.white),
+                          ),
+                          onDismissed: (_) => _remove(r.id, r.name),
+                          child: InkWell(
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => RecipeDetailScreen(recipe: r),
+                                ),
+                              );
+                              _loadFavorites();
+                            },
+                            borderRadius: BorderRadius.circular(20),
+                            child: CardBox(
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF3F6EC),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(r.emoji, style: const TextStyle(fontSize: 26)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          r.name,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w800,
+                                            color: ink,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${r.cuisine} · ${r.totalTime} · ${r.nutrition.calories} kcal',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.bookmark_remove,
+                                      color: Colors.grey,
+                                      size: 20,
+                                    ),
+                                    tooltip: 'Remove',
+                                    onPressed: () => _remove(r.id, r.name),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
     );
   }
 }
@@ -4550,6 +4841,21 @@ class _RecipeScreenState extends State<RecipeScreen> {
       appBar: AppBar(
         title: const Text('Recipe Explorer'),
         backgroundColor: canvas,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bookmarks_outlined, color: deepGreen),
+            tooltip: 'Saved Recipes',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SavedRecipesScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.hub_outlined, color: deepGreen),
+            tooltip: 'Server Connection',
+            onPressed: () => showBackendSettingsModal(context, onUrlUpdated: () => setState(() {})),
+          ),
+        ],
       ),
       body: ScreenScroll(
         children: [

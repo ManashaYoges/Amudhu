@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const mealRoutes = require('./routes/meals');
 const chatRoutes = require('./routes/chat');
+const recipeRoutes = require('./routes/recipes');
 const { notFound, errorHandler } = require('./middleware/errors');
 const { processFoodImage } = require('./services/visionService');
 const { calculateMealNutrition, FOOD_DATABASE } = require('./services/nutritionDatabase');
@@ -42,6 +43,7 @@ app.get(['/', '/health', '/api/health'], (req, res) => res.json({
 app.use(['/auth', '/api/auth'], authRoutes);
 app.use(['/meals', '/api/meals'], mealRoutes);
 app.use(['/chat', '/api/chat'], chatRoutes);
+app.use(['/recipes', '/api/recipes'], recipeRoutes);
 
 // Smart Plate: Meal Analysis
 app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async (req, res, next) => {
@@ -132,10 +134,6 @@ app.post(['/api/generate-recipes', '/v1/generate-recipes'], async (req, res) => 
     return res.status(500).json({ error: 'Recipe generation failed: ' + err.message, code: 'RECIPE_GENERATION_FAILED' });
   }
 });
-
-app.get(['/api/recipes/search', '/v1/recipes/search'], (req, res) => res.json({
-  query: String(req.query.q || '').slice(0, 100), count: 0, recipes: [], videos: [], cuisines: ['All'], recommendations: [],
-}));
 
 app.use(notFound);
 app.use(errorHandler);

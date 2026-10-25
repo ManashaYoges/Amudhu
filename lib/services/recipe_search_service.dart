@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import '../models/fridge_recipe_models.dart';
+import 'api_client.dart';
 
 /// Exception thrown when recipe or video search fails.
 class RecipeSearchException implements Exception {
@@ -16,38 +15,173 @@ class RecipeSearchException implements Exception {
 
 /// Service that searches for written recipes across cuisines and cooking videos.
 class RecipeSearchService {
+  RecipeSearchService._();
+  static final RecipeSearchService instance = RecipeSearchService._();
+  factory RecipeSearchService() => instance;
+
   /// Toggle to switch between mock/demonstration provider and live recipe API backend.
-  static const bool useMockApi = true;
+  static bool useMockApi = false;
 
   /// External or backend Recipe Search API endpoint.
-  /// Configure this with your team's endpoint (e.g., Spoonacular, TheMealDB proxy, or custom backend).
-  /// Note: Do NOT expose private API keys in client code; keep them secured on your backend server.
-  static const String backendApiUrl = 'https://api.amudhu.example.com/v1/recipes/search';
+  static String get backendApiUrl => '${ApiClient.baseUrl}/api/recipes/search';
 
-  /// In-memory session cache to avoid redundant network queries for the same query.
+  /// In-memory session cache to avoid redundant network queries.
   static final Map<String, RecipeSearchResult> _cache = {};
 
+  /// In-memory cache for bookmarked recipes
+  static final List<Recipe> _localFavorites = [];
+  static final Set<String> _favoriteIds = {};
+
   /// Searches recipes and related videos for an ingredient or dish name.
-  Future<RecipeSearchResult> search(String query) async {
+  Future<RecipeSearchResult> search(
+    String query, {
+    String cuisine = 'All',
+    String diet = 'All',
+    int? maxMinutes,
+  }) async {
     final cleanQuery = query.trim().toLowerCase();
     if (cleanQuery.isEmpty) {
       throw const RecipeSearchException("Please enter a recipe name or ingredient to search.");
     }
 
+    final cacheKey = '$cleanQuery|$cuisine|$diet|${maxMinutes ?? 'any'}';
     // Check cache
-    if (_cache.containsKey(cleanQuery)) {
-      return _cache[cleanQuery]!;
+    if (_cache.containsKey(cacheKey)) {
+      return _cache[cacheKey]!;
     }
 
     RecipeSearchResult result;
     if (useMockApi) {
       result = await _performMockSearch(cleanQuery);
     } else {
-      result = await _performBackendSearch(cleanQuery);
+      result = await _performBackendSearch(
+        cleanQuery,
+        cuisine: cuisine,
+        diet: diet,
+        maxMinutes: maxMinutes,
+      );
     }
 
-    _cache[cleanQuery] = result;
+    _cache[cacheKey] = result;
     return result;
+  }
+
+  /// Live API Integration Point connecting to Amudhu Express / MongoDB Backend.
+  Future<RecipeSearchResult> _performBackendSearch(
+    String query, {
+    String cuisine = 'All',
+    String diet = 'All',
+    int? maxMinutes,
+  }) async {
+    try {
+      final queryParams = <String, String>{'q': query};
+      if (cuisine != 'All') queryParams['cuisine'] = cuisine;
+      if (diet != 'All') queryParams['diet'] = diet;
+      if (maxMinutes != null) queryParams['maxMinutes'] = maxMinutes.toString();
+
+      final queryString = Uri(queryParameters: queryParams).query;
+
+      final json = await ApiClient.instance.get(
+        '/api/recipes/search?$queryString',
+        authenticated: ApiClient.instance.token != null,
+      );
+
+      final recipesList = (json['recipes'] as List<dynamic>?)
+              ?.map((e) => Recipe.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [];
+
+      final videosList = (json['videos'] as List<dynamic>?)
+              ?.map((e) => CookingVideo.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [];
+
+      final cuisinesList = (json['cuisines'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          ['All'];
+
+      final recsList = (json['recommendations'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+
+      return RecipeSearchResult(
+        query: query,
+        recipes: recipesList,
+        videos: videosList,
+        availableCuisines: cuisinesList,
+        relatedRecommendations: recsList,
+      );
+    } catch (_) {
+      // Graceful offline fallback to smart local catalog if backend server is unreachable
+      return _performMockSearch(query);
+    }
+  }
+
+  /// Retrieves user's favorite recipes saved to MongoDB backend.
+  Future<List<Recipe>> getFavorites() async {
+    if (useMockApi || ApiClient.instance.token == null) {
+      return List<Recipe>.from(_localFavorites);
+    }
+    try {
+      final json = await ApiClient.instance.get(
+        '/api/recipes/favorites',
+        authenticated: true,
+      );
+      final list = (json['favorites'] as List<dynamic>?)
+              ?.map((e) => Recipe.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [];
+      _localFavorites.clear();
+      _localFavorites.addAll(list);
+      _favoriteIds.clear();
+      _favoriteIds.addAll(list.map((r) => r.id));
+      return list;
+    } catch (_) {
+      return List<Recipe>.from(_localFavorites);
+    }
+  }
+
+  /// Saves a recipe to MongoDB favorites.
+  Future<bool> saveFavorite(Recipe recipe) async {
+    _favoriteIds.add(recipe.id);
+    _localFavorites.removeWhere((r) => r.id == recipe.id);
+    _localFavorites.insert(0, recipe);
+    if (useMockApi || ApiClient.instance.token == null) {
+      return true;
+    }
+    try {
+      await ApiClient.instance.post(
+        '/api/recipes/favorites',
+        body: recipe.toJson(),
+        authenticated: true,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Removes a recipe from MongoDB favorites.
+  Future<bool> removeFavorite(String recipeId) async {
+    _favoriteIds.remove(recipeId);
+    _localFavorites.removeWhere((r) => r.id == recipeId);
+    if (useMockApi || ApiClient.instance.token == null) {
+      return true;
+    }
+    try {
+      await ApiClient.instance.delete('/api/recipes/favorites/$recipeId');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Checks if a recipe is currently favorited.
+  bool isFavorite(String recipeId) {
+    return _favoriteIds.contains(recipeId) ||
+        _localFavorites.any((r) => r.id == recipeId);
   }
 
   /// Intelligent multi-cuisine mock provider with comprehensive culinary knowledge.
@@ -115,61 +249,7 @@ class RecipeSearchService {
     );
   }
 
-  /// Live API Integration Point.
-  Future<RecipeSearchResult> _performBackendSearch(String query) async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 15);
 
-    try {
-      final uri = Uri.parse('$backendApiUrl?q=${Uri.encodeComponent(query)}');
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-
-      if (response.statusCode == 200) {
-        final body = await response.transform(utf8.decoder).join();
-        final Map<String, dynamic> json = jsonDecode(body);
-
-        final recipesList = (json['recipes'] as List<dynamic>?)
-                ?.map((e) => Recipe.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            [];
-
-        final videosList = (json['videos'] as List<dynamic>?)
-                ?.map((e) => CookingVideo.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            [];
-
-        final cuisinesList = (json['cuisines'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            ['All'];
-
-        final recsList = (json['recommendations'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            [];
-
-        return RecipeSearchResult(
-          query: query,
-          recipes: recipesList,
-          videos: videosList,
-          availableCuisines: cuisinesList,
-          relatedRecommendations: recsList,
-        );
-      } else {
-        throw const RecipeSearchException("We couldn't load recipes right now. Please try again.");
-      }
-    } on SocketException catch (e) {
-      throw RecipeSearchException("Please check your internet connection and try again.", e);
-    } on TimeoutException catch (e) {
-      throw RecipeSearchException("Search timed out. Please check your connection and try again.", e);
-    } catch (e) {
-      if (e is RecipeSearchException) rethrow;
-      throw RecipeSearchException("We couldn't load recipes right now. Please try again.", e);
-    } finally {
-      client.close();
-    }
-  }
 
   // --- Dynamic Video Generator ---
 
