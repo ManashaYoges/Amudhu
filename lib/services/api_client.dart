@@ -26,7 +26,7 @@ class ApiClient {
   static const _baseUrlStorageKey = 'amudhu_base_url';
 
   // Change this if your laptop's IPv4 address changes.
-  static const String _laptopBaseUrl = 'http://10.252.0.71:3000';
+  static const String _laptopBaseUrl = 'http://10.163.115.38:3000';
 
   static String? _baseUrlOverride;
   static String? _autoResolvedBaseUrl;

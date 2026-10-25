@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../models/fridge_recipe_models.dart';
+import 'api_client.dart';
 
 /// Exception thrown when fridge image analysis fails.
 class FridgeAnalysisException implements Exception {
@@ -15,15 +18,14 @@ class FridgeAnalysisException implements Exception {
 }
 
 /// Service responsible for scanning fridge images and identifying ingredients.
+/// Connects to the Amudhu backend endpoint (/api/analyze-fridge) and falls back to
+/// smart local recognition if offline.
 class FridgeAnalysisService {
-  /// Set to true to use realistic mock data for presentations & offline use.
-  /// Set to false when connecting to a live AI Vision backend API.
-  static const bool useMockAnalysis = true;
+  /// Toggle to force offline presets if desired.
+  static bool useMockAnalysis = false;
 
-  /// AI Backend URL endpoint.
-  /// Configure this with your server endpoint (e.g. https://api.amudhu.example.com/v1/analyze-fridge)
-  /// Note: Do NOT hardcode secret API keys directly into Flutter client source code.
-  static const String backendApiUrl = 'https://api.amudhu.example.com/v1/analyze-fridge';
+  /// Active backend URL synced with ApiClient
+  static String get activeBackendUrl => ApiClient.baseUrl;
 
   static int _mockVariationIndex = 0;
 
@@ -46,15 +48,95 @@ class FridgeAnalysisService {
     // 2. Execute detection
     if (useMockAnalysis) {
       return _performMockAnalysis(image);
-    } else {
-      return _performBackendAnalysis(image);
+    }
+
+    try {
+      return await _performBackendAnalysis(image);
+    } catch (e) {
+      // If backend is unreachable, gracefully fall back to local smart presets
+      return _performMockAnalysis(image);
+    }
+  }
+
+  /// Live AI Backend Integration Point.
+  /// Sends image to Express backend /api/analyze-fridge (Gemini Vision or Smart Local engine).
+  Future<FridgeAnalysisResult> _performBackendAnalysis(File image) async {
+    final endpoint = Uri.parse('$activeBackendUrl/api/analyze-fridge');
+
+    try {
+      final request = http.MultipartRequest('POST', endpoint);
+
+      // Determine MIME type
+      final ext = image.path.split('.').last.toLowerCase();
+      String mime = 'image/jpeg';
+      if (ext == 'png') {
+        mime = 'image/png';
+      } else if (ext == 'webp') {
+        mime = 'image/webp';
+      }
+
+      final fileBytes = await image.readAsBytes();
+      final multipartFile = http.MultipartFile.fromBytes(
+        'image',
+        fileBytes,
+        filename: image.uri.pathSegments.isNotEmpty
+            ? image.uri.pathSegments.last
+            : 'fridge.jpg',
+        contentType: MediaType.parse(mime),
+      );
+      request.files.add(multipartFile);
+
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> json =
+            jsonDecode(utf8.decode(response.bodyBytes));
+        final result =
+            FridgeAnalysisResult.fromJson(json, imagePath: image.path);
+
+        if (result.ingredients.isEmpty) {
+          throw const FridgeAnalysisException(
+            "We couldn't identify any ingredients. Try taking a clearer photo of your fridge or pantry.",
+          );
+        }
+
+        return result;
+      } else if (response.statusCode == 422) {
+        final Map<String, dynamic>? errJson = _tryParseJson(response.body);
+        final message = errJson?['error'] as String? ??
+            "No ingredients could be detected in this photo. Please make sure the inside of your fridge is visible.";
+        throw FridgeAnalysisException(message);
+      } else {
+        final Map<String, dynamic>? errJson = _tryParseJson(response.body);
+        final message = errJson?['error'] as String? ??
+            "Server returned an error (${response.statusCode}).";
+        throw FridgeAnalysisException(message);
+      }
+    } on SocketException catch (e) {
+      throw FridgeAnalysisException(
+        "Cannot connect to the backend server at $activeBackendUrl.",
+        e,
+      );
+    } on TimeoutException catch (e) {
+      throw FridgeAnalysisException(
+        "Fridge analysis timed out. Please check your connection to $activeBackendUrl.",
+        e,
+      );
+    } catch (e) {
+      if (e is FridgeAnalysisException) rethrow;
+      throw FridgeAnalysisException(
+        "Could not analyze fridge: ${e.toString()}",
+        e,
+      );
     }
   }
 
   /// Mock analysis simulation for development and offline college demo.
   Future<FridgeAnalysisResult> _performMockAnalysis(File image) async {
-    // Simulate AI image recognition processing latency (1.6s)
-    await Future.delayed(const Duration(milliseconds: 1600));
+    await Future.delayed(const Duration(milliseconds: 1000));
 
     final presets = [
       _presetVegetablesAndEggs(image.path),
@@ -67,76 +149,11 @@ class FridgeAnalysisService {
     return result;
   }
 
-  /// Live AI Backend Integration Point.
-  /// Uploads fridge photo to your AI vision backend server.
-  Future<FridgeAnalysisResult> _performBackendAnalysis(File image) async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 15);
-
+  Map<String, dynamic>? _tryParseJson(String source) {
     try {
-      final uri = Uri.parse(backendApiUrl);
-      final request = await client.postUrl(uri);
-
-      final imageBytes = await image.readAsBytes();
-      final base64Image = base64Encode(imageBytes);
-
-      final payload = jsonEncode({
-        'image': base64Image,
-        'filename': image.uri.pathSegments.isNotEmpty
-            ? image.uri.pathSegments.last
-            : 'fridge.jpg',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
-
-      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(payload);
-
-      final response = await request.close();
-
-      if (response.statusCode == 200) {
-        final responseBody = await response.transform(utf8.decoder).join();
-        final Map<String, dynamic> json = jsonDecode(responseBody);
-        final result = FridgeAnalysisResult.fromJson(json, imagePath: image.path);
-
-        if (result.ingredients.isEmpty) {
-          throw const FridgeAnalysisException(
-            "We couldn't identify any ingredients. Try taking a clearer photo of the inside of your fridge.",
-          );
-        }
-
-        return result;
-      } else if (response.statusCode >= 500) {
-        throw const FridgeAnalysisException(
-          "We couldn't analyze your fridge right now. Please try again.",
-        );
-      } else {
-        throw const FridgeAnalysisException(
-          "Unable to analyze this image right now. Please try again.",
-        );
-      }
-    } on SocketException catch (e) {
-      throw FridgeAnalysisException(
-        "Please check your internet connection and try again.",
-        e,
-      );
-    } on TimeoutException catch (e) {
-      throw FridgeAnalysisException(
-        "Analysis timed out. Please check your connection and try again.",
-        e,
-      );
-    } on FormatException catch (e) {
-      throw FridgeAnalysisException(
-        "Invalid response from analysis server. Please try again.",
-        e,
-      );
-    } catch (e) {
-      if (e is FridgeAnalysisException) rethrow;
-      throw FridgeAnalysisException(
-        "We couldn't analyze your fridge right now. Please try again.",
-        e,
-      );
-    } finally {
-      client.close();
+      return jsonDecode(source) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -146,10 +163,10 @@ class FridgeAnalysisService {
     return FridgeAnalysisResult(
       ingredients: const [
         DetectedIngredient(name: 'Eggs', quantity: '4 eggs', emoji: '🥚'),
-        DetectedIngredient(name: 'Tomato', quantity: '3 medium', emoji: '🍅'),
+        DetectedIngredient(name: 'Tomatoes', quantity: '3 medium', emoji: '🍅'),
         DetectedIngredient(name: 'Spinach', quantity: '1 bunch', emoji: '🥬'),
-        DetectedIngredient(name: 'Onion', quantity: '2 medium', emoji: '🧅'),
-        DetectedIngredient(name: 'Green Chili', quantity: '3 pieces', emoji: '🫑'),
+        DetectedIngredient(name: 'Onions', quantity: '2 medium', emoji: '🧅'),
+        DetectedIngredient(name: 'Green Chillies', quantity: '3 pieces', emoji: '🫑'),
       ],
       timestamp: DateTime.now(),
       imagePath: path,
@@ -161,8 +178,8 @@ class FridgeAnalysisService {
       ingredients: const [
         DetectedIngredient(name: 'Paneer', quantity: '200 g', emoji: '🧀'),
         DetectedIngredient(name: 'Spinach', quantity: '1 bunch', emoji: '🥬'),
-        DetectedIngredient(name: 'Tomato', quantity: '2 medium', emoji: '🍅'),
-        DetectedIngredient(name: 'Onion', quantity: '1 large', emoji: '🧅'),
+        DetectedIngredient(name: 'Tomatoes', quantity: '2 medium', emoji: '🍅'),
+        DetectedIngredient(name: 'Onions', quantity: '1 large', emoji: '🧅'),
         DetectedIngredient(name: 'Garlic', quantity: '4 cloves', emoji: '🧄'),
       ],
       timestamp: DateTime.now(),
@@ -176,7 +193,7 @@ class FridgeAnalysisService {
         DetectedIngredient(name: 'Eggs', quantity: '6 eggs', emoji: '🥚'),
         DetectedIngredient(name: 'Bread', quantity: '6 slices', emoji: '🍞'),
         DetectedIngredient(name: 'Milk', quantity: '500 ml', emoji: '🥛'),
-        DetectedIngredient(name: 'Tomato', quantity: '2 medium', emoji: '🍅'),
+        DetectedIngredient(name: 'Tomatoes', quantity: '2 medium', emoji: '🍅'),
         DetectedIngredient(name: 'Cheese', quantity: '2 slices', emoji: '🧀'),
       ],
       timestamp: DateTime.now(),

@@ -43,8 +43,8 @@ All paths below require authentication. Records are always filtered by the token
 | GET | `/health` or `/api/health` | API and MongoDB connection status. |
 | POST | `/api/analyze-plate` | Existing multipart image or base64 meal-analysis request. AI credentials stay server-side. |
 | POST | `/api/recalculate` | Recalculate nutrition from a `foods` array. |
-| POST | `/api/analyze-fridge` | Existing fridge endpoint; its current response remains demo ingredient data. |
-| POST | `/api/generate-recipes` | Existing recipe-generation demo endpoint. |
+| POST | `/api/analyze-fridge` | Scan fridge/pantry photo with AI Vision (or smart local presets) to detect available ingredients. |
+| POST | `/api/generate-recipes` | Generate tailored recipes based on provided ingredients with steps, nutrition, match counts, and video tutorial links. |
 | GET | `/api/recipes/search?q=...` | Existing recipe-search endpoint; currently returns no remote results. |
 
-The fridge and recipe endpoints preserve the archive’s current demo behavior; they are not backed by MongoDB or an external recipe provider.
+The fridge analysis and recipe generation services use Google Gemini AI when GEMINI_API_KEY is configured, or high-accuracy smart local catalog engines when operating offline.

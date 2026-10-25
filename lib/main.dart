@@ -3374,7 +3374,16 @@ class _FridgeScreenState extends State<FridgeScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Smart Fridge')),
+    appBar: AppBar(
+      title: const Text('Smart Fridge'),
+      actions: [
+        IconButton(
+          onPressed: () => showBackendSettingsModal(context, onUrlUpdated: () => setState(() {})),
+          icon: const Icon(Icons.hub_outlined, color: deepGreen),
+          tooltip: 'Configure Backend Server',
+        ),
+      ],
+    ),
     body: ScreenScroll(
       children: [
         const PageHeading(

@@ -10,6 +10,7 @@ const chatRoutes = require('./routes/chat');
 const { notFound, errorHandler } = require('./middleware/errors');
 const { processFoodImage } = require('./services/visionService');
 const { calculateMealNutrition, FOOD_DATABASE } = require('./services/nutritionDatabase');
+const { analyzeFridgeImage, generateRecipesFromIngredients } = require('./services/fridgeService');
 
 const app = express();
 app.disable('x-powered-by');
@@ -42,6 +43,7 @@ app.use(['/auth', '/api/auth'], authRoutes);
 app.use(['/meals', '/api/meals'], mealRoutes);
 app.use(['/chat', '/api/chat'], chatRoutes);
 
+// Smart Plate: Meal Analysis
 app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async (req, res, next) => {
   let imageBuffer; let mimeType = 'image/jpeg';
   if (req.file) { imageBuffer = req.file.buffer; mimeType = req.file.mimetype || mimeType; }
@@ -55,7 +57,7 @@ app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async
   try {
     const apiKey = (process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
     const result = await processFoodImage({ buffer: imageBuffer, mimeType, apiKey,
-      provider: process.env.AI_PROVIDER || (apiKey ? 'gemini' : 'smart_local'), model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' });
+      provider: process.env.AI_PROVIDER || (apiKey ? 'gemini' : 'smart_local'), model: process.env.GEMINI_MODEL || 'gemini-1.5-flash' });
     if (!result.success) return res.status(422).json({ error: result.message, code: 'NO_FOOD_DETECTED' });
     return res.json(result);
   } catch (err) {
@@ -69,25 +71,68 @@ app.post(['/recalculate', '/api/recalculate'], (req, res) => {
   return res.json({ success: true, ...calculateMealNutrition(req.body.foods), analysisSource: 'user_edited', timestamp: new Date().toISOString() });
 });
 
-app.post(['/api/analyze-fridge', '/v1/analyze-fridge'], upload.single('image'), (req, res) => res.json({
-  ingredients: [
-    { name: 'Eggs', quantity: '4 pieces', emoji: '🥚' }, { name: 'Tomatoes', quantity: '3 medium', emoji: '🍅' },
-    { name: 'Onions', quantity: '2 medium', emoji: '🧅' }, { name: 'Spinach / Palak', quantity: '1 bunch', emoji: '🥬' },
-    { name: 'Paneer', quantity: '200 g', emoji: '🧀' }, { name: 'Curd / Yogurt', quantity: '250 g', emoji: '🥛' },
-    { name: 'Carrots', quantity: '2 medium', emoji: '🥕' }, { name: 'Green Chillies', quantity: '4 pieces', emoji: '🫑' },
-  ], timestamp: new Date().toISOString(),
-}));
-app.post(['/api/generate-recipes', '/v1/generate-recipes'], (req, res) => {
-  const ingredients = Array.isArray(req.body?.ingredients) ? req.body.ingredients : [];
-  return res.json({ success: true, recipes: [{ id: 'recipe_egg_bhurji', name: 'Homestyle Spiced Egg Bhurji', emoji: '🍳',
-    description: 'Quick, protein-rich scrambled eggs with onions, tomatoes and spices.', prepTime: '5 min', cookTime: '10 min',
-    totalTime: '15 min', servings: 2, difficulty: 'Easy', cuisine: 'Indian', isVegetarian: false,
-    ingredients: [{ name: 'Eggs', quantity: '3 pieces', isFromFridge: true }, { name: 'Onion', quantity: '1 finely chopped', isFromFridge: true },
-      { name: 'Tomato', quantity: '1 medium chopped', isFromFridge: true }, { name: 'Oil / Ghee', quantity: '1 tsp', isFromFridge: false }],
-    steps: ['Sauté onion and tomato.', 'Add beaten eggs and spices; scramble until cooked through.'],
-    nutrition: { calories: 220, protein: 16.5, carbs: 6.2, fat: 14.8, fiber: 1.5 }, matchedCount: Math.min(3, ingredients.length), totalIngredientsCount: 4,
-  }] });
+// Fridge to Recipe: Scan fridge photo to extract ingredients
+app.post(['/api/analyze-fridge', '/v1/analyze-fridge'], upload.single('image'), async (req, res, next) => {
+  let imageBuffer;
+  let mimeType = 'image/jpeg';
+  if (req.file) {
+    imageBuffer = req.file.buffer;
+    mimeType = req.file.mimetype || mimeType;
+  } else if (req.body?.image) {
+    let raw = req.body.image;
+    const dataUri = raw.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+    if (dataUri) {
+      mimeType = dataUri[1];
+      raw = dataUri[2];
+    } else if (req.body.mimeType) {
+      mimeType = req.body.mimeType;
+    }
+    imageBuffer = Buffer.from(raw, 'base64');
+  }
+
+  if (!imageBuffer?.length) {
+    return res.status(400).json({ error: 'No fridge image was provided.', code: 'IMAGE_REQUIRED' });
+  }
+
+  try {
+    const apiKey = (process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    const result = await analyzeFridgeImage({
+      buffer: imageBuffer,
+      mimeType,
+      apiKey,
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    });
+
+    if (!result.success) {
+      return res.status(422).json({ error: result.message, code: 'NO_INGREDIENTS_DETECTED' });
+    }
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: 'Fridge analysis failed: ' + err.message, code: 'FRIDGE_ANALYSIS_FAILED' });
+  }
 });
+
+// Fridge to Recipe: Generate recipes based on user ingredients
+app.post(['/api/generate-recipes', '/v1/generate-recipes'], async (req, res) => {
+  const ingredients = Array.isArray(req.body?.ingredients) ? req.body.ingredients : [];
+  if (ingredients.length === 0) {
+    return res.status(400).json({ error: 'Please provide at least one ingredient to generate recipes.', code: 'INGREDIENTS_REQUIRED' });
+  }
+
+  try {
+    const apiKey = (process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    const result = await generateRecipesFromIngredients({
+      ingredients,
+      apiKey,
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: 'Recipe generation failed: ' + err.message, code: 'RECIPE_GENERATION_FAILED' });
+  }
+});
+
 app.get(['/api/recipes/search', '/v1/recipes/search'], (req, res) => res.json({
   query: String(req.query.q || '').slice(0, 100), count: 0, recipes: [], videos: [], cuisines: ['All'], recommendations: [],
 }));
