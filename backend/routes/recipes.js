@@ -1,15 +1,24 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { optionalAuthenticate, authenticate } = require('../middleware/authenticate');
 const { searchRecipes } = require('../services/recipeSearchService');
 const FavoriteRecipe = require('../models/FavoriteRecipe');
 
 const router = express.Router();
 
+const searchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many search requests. Please slow down.', code: 'RATE_LIMIT_EXCEEDED' },
+});
+
 /**
  * GET /api/recipes/search?q=...&cuisine=...&diet=...&maxMinutes=...
  * Search across multi-cuisine recipes and videos
  */
-router.get('/search', optionalAuthenticate, async (req, res, next) => {
+router.get('/search', searchLimiter, optionalAuthenticate, async (req, res, next) => {
   try {
     const query = String(req.query.q || '').slice(0, 100);
     const cuisine = String(req.query.cuisine || 'All');
@@ -68,6 +77,18 @@ router.post('/favorites', authenticate, async (req, res, next) => {
     }
 
     const recipeId = recipe.id || `recipe_${Date.now()}`;
+    let sanitizedVideoUrl = null;
+    if (recipe.videoUrl && typeof recipe.videoUrl === 'string') {
+      try {
+        const parsed = new URL(recipe.videoUrl.trim());
+        if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+          sanitizedVideoUrl = parsed.href;
+        }
+      } catch (_) {
+        sanitizedVideoUrl = null;
+      }
+    }
+
     const saved = await FavoriteRecipe.findOneAndUpdate(
       { owner: req.userId, recipeId },
       {
@@ -87,7 +108,7 @@ router.post('/favorites', authenticate, async (req, res, next) => {
           ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
           steps: Array.isArray(recipe.steps) ? recipe.steps : [],
           nutrition: recipe.nutrition || {},
-          videoUrl: recipe.videoUrl || null,
+          videoUrl: sanitizedVideoUrl,
           timestamp: new Date(),
         },
       },

@@ -358,16 +358,23 @@ class _WelcomeGateState extends State<WelcomeGate> {
                       child: const Text('Continue as guest'),
                     ),
                     const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
-                        const Icon(Icons.circle, size: 8, color: green),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Server: ${ApiClient.baseUrl}',
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.circle, size: 8, color: green),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Server: ${ApiClient.baseUrl}',
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 4),
                         InkWell(
                           onTap: () => showBackendSettingsModal(context, onUrlUpdated: () {
                             setState(() {});
@@ -597,12 +604,16 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
+    MealStorageService.instance.loadMeals();
     pages = [
-      const HomeScreen(),
-      const MealPlanScreen(),
+      HomeScreen(onNavigateTab: (tab) => setState(() => index = tab)),
+      MealPlanScreen(onNavigateTab: (tab) => setState(() => index = tab)),
       const ChatScreen(),
       const SmartPlateScreen(),
-      ProfileScreen(onLogout: widget.onLogout),
+      ProfileScreen(
+        onLogout: widget.onLogout,
+        onNavigateTab: (tab) => setState(() => index = tab),
+      ),
     ];
   }
 
@@ -649,7 +660,9 @@ class _MainShellState extends State<MainShell> {
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  final ValueChanged<int>? onNavigateTab;
+  const HomeScreen({super.key, this.onNavigateTab});
+
   @override
   Widget build(BuildContext context) {
     final user = AuthService.instance.currentUser;
@@ -676,7 +689,8 @@ class HomeScreen extends StatelessWidget {
             ),
             const Spacer(),
             IconButton(
-              onPressed: () => _message(context, 'You’re all caught up!'),
+              onPressed: () => _showNotificationsSheet(context),
+              tooltip: 'Notifications & Reminders',
               icon: const Icon(Icons.notifications_none_rounded),
             ),
             CircleAvatar(
@@ -697,314 +711,1242 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 4),
         const Text('Let’s make healthy choices today.'),
         const SizedBox(height: 20),
-      Row(
-        children: [
-          const Expanded(
-            child: Text(
-              'Today’s nutrition',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-            ),
-          ),
-          Text('Oct 4', style: TextStyle(color: Colors.grey.shade600)),
-        ],
-      ),
-      const SizedBox(height: 10),
-      CardBox(
-        child: Column(
-          children: [
-            Row(
+
+        ListenableBuilder(
+          listenable: MealStorageService.instance,
+          builder: (context, _) {
+            final todayMeals = MealStorageService.instance.getTodayMeals();
+            final allMeals = MealStorageService.instance.savedMeals;
+            final totalCalories = MealStorageService.instance.todayCalories;
+            final totalProtein = MealStorageService.instance.todayProtein;
+            final totalCarbs = MealStorageService.instance.todayCarbs;
+            final totalFat = MealStorageService.instance.todayFat;
+            const targetCalories = 2000;
+            final double progress = (totalCalories / targetCalories).clamp(0.0, 1.0);
+            final String statusText = todayMeals.isEmpty
+                ? 'Ready'
+                : (totalCalories <= targetCalories ? 'On track' : 'Over target');
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Expanded(
-                  child: Text(
-                    'Your daily balance',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: mint,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'On track',
-                    style: TextStyle(
-                      color: deepGreen,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Today’s nutrition',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                      ),
                     ),
+                    Text(
+                      _formatTodayDate(),
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                CardBox(
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Your daily balance',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: mint,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              statusText,
+                              style: const TextStyle(
+                                color: deepGreen,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '$totalCalories',
+                                  style: const TextStyle(
+                                    fontSize: 27,
+                                    fontWeight: FontWeight.w900,
+                                    color: deepGreen,
+                                  ),
+                                ),
+                                const Text('of 2000 kcal today'),
+                                const SizedBox(height: 10),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(9),
+                                  child: LinearProgressIndicator(
+                                    value: progress,
+                                    minHeight: 8,
+                                    backgroundColor: const Color(0xFFEAF0E6),
+                                    color: green,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 17),
+                          SizedBox(
+                            width: 60,
+                            height: 60,
+                            child: CircularProgressIndicator(
+                              value: progress,
+                              strokeWidth: 7,
+                              backgroundColor: mint,
+                              color: green,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          MacroMini(
+                            label: 'Protein',
+                            value: '${totalProtein.toInt()} / 90 g',
+                            icon: '💪',
+                          ),
+                          MacroMini(
+                            label: 'Carbs',
+                            value: '${totalCarbs.toInt()} g',
+                            icon: '🌾',
+                          ),
+                          MacroMini(
+                            label: 'Fat',
+                            value: '${totalFat.toInt()} g',
+                            icon: '🥑',
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
+                const SizedBox(height: 23),
+                const Text(
+                  'A little nourishment for today',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+                ),
+                const SizedBox(height: 10),
+                CardBox(
+                  color: const Color(0xFFF1F6E9),
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        '1450',
-                        style: TextStyle(
-                          fontSize: 27,
-                          fontWeight: FontWeight.w900,
-                          color: deepGreen,
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
                         ),
+                        child: const Icon(Icons.lightbulb_outline, color: green),
                       ),
-                      const Text('of 2000 kcal today'),
-                      const SizedBox(height: 10),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(9),
-                        child: const LinearProgressIndicator(
-                          value: .72,
-                          minHeight: 8,
-                          backgroundColor: Color(0xFFEAF0E6),
-                          color: green,
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'DAILY HEALTH TIP  ·  HYDRATION',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: deepGreen,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: .5,
+                              ),
+                            ),
+                            SizedBox(height: 6),
+                            Text(
+                              'Keeping a glass of water nearby can make it easier to sip throughout your day.',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                height: 1.4,
+                                color: ink,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 17),
-                const SizedBox(
-                  width: 60,
-                  height: 60,
-                  child: CircularProgressIndicator(
-                    value: .72,
-                    strokeWidth: 7,
-                    backgroundColor: mint,
-                    color: green,
+                const SizedBox(height: 22),
+                const Text(
+                  'Quick actions',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+                ),
+                const SizedBox(height: 10),
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.8,
+                  children: [
+                    QuickTile(
+                      icon: '📷',
+                      title: 'Smart Plate',
+                      sub: 'Scan your meal',
+                      onTap: () => onNavigateTab?.call(3),
+                    ),
+                    QuickTile(
+                      icon: '🧊',
+                      title: 'Smart Fridge',
+                      sub: 'What can I cook?',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const FridgeScreen()),
+                      ),
+                    ),
+                    QuickTile(
+                      icon: '✨',
+                      title: 'Ask Amudu',
+                      sub: 'Food, simply explained',
+                      onTap: () => onNavigateTab?.call(2),
+                    ),
+                    QuickTile(
+                      icon: '🍲',
+                      title: 'Find a recipe',
+                      sub: 'Cook with what you have',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const RecipeScreen()),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Today’s meals (${todayMeals.length})',
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+                    ),
+                    if (allMeals.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const MealHistoryScreen()),
+                        ),
+                        icon: const Icon(Icons.history, size: 16),
+                        label: Text('All history (${allMeals.length})', style: const TextStyle(fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          foregroundColor: deepGreen,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                if (todayMeals.isEmpty)
+                  CardBox(
+                    color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
+                      child: Column(
+                        children: [
+                          const Text('🍽️', style: TextStyle(fontSize: 34)),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'No meals logged today yet',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: ink),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Snap a photo with Smart Plate to automatically calculate your nutrition.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 11, color: Color(0xFF687067)),
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            onPressed: () => onNavigateTab?.call(3),
+                            style: filledStyle,
+                            icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                            label: const Text('Log with Smart Plate'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  ...todayMeals.map((meal) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: MealRow(
+                        emoji: _guessMealEmoji(meal),
+                        meal: '${_formatTime(meal.timestamp)} · ${meal.foods.length} items',
+                        dish: meal.mealName,
+                        kcal: '${meal.total.calories} kcal',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MealDetailScreen(
+                              meal: meal,
+                              mealId: MealStorageService.instance.getMealId(meal),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+String _formatTodayDate() {
+  final now = DateTime.now();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final dayName = days[now.weekday - 1];
+  final monthName = months[now.month - 1];
+  return '$dayName, $monthName ${now.day}';
+}
+
+String _formatTodayDateSpecific(DateTime dt) {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final now = DateTime.now();
+  if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+    return 'Today';
+  }
+  final yesterday = now.subtract(const Duration(days: 1));
+  if (dt.year == yesterday.year && dt.month == yesterday.month && dt.day == yesterday.day) {
+    return 'Yesterday';
+  }
+  final dayName = days[dt.weekday - 1];
+  final monthName = months[dt.month - 1];
+  return '$dayName, $monthName ${dt.day}';
+}
+
+String _formatTime(DateTime dt) {
+  final hour = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
+  final minute = dt.minute.toString().padLeft(2, '0');
+  final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $ampm';
+}
+
+String _guessMealEmoji(FoodAnalysisResult meal) {
+  final name = meal.mealName.toLowerCase();
+  if (name.contains('break') || name.contains('oat') || name.contains('egg') || name.contains('toast') || name.contains('dosa') || name.contains('idli')) return '🥣';
+  if (name.contains('lunch') || name.contains('rice') || name.contains('biryani') || name.contains('dal')) return '🍛';
+  if (name.contains('din') || name.contains('paneer') || name.contains('curry') || name.contains('chapati') || name.contains('roti')) return '🥗';
+  if (name.contains('snack') || name.contains('fruit') || name.contains('yogurt') || name.contains('tea') || name.contains('coffee')) return '🍎';
+  if (meal.foods.any((f) => f.name.toLowerCase().contains('chicken') || f.name.toLowerCase().contains('meat'))) return '🍗';
+  if (meal.foods.any((f) => f.name.toLowerCase().contains('pasta') || f.name.toLowerCase().contains('noodle'))) return '🍝';
+  return '🍽️';
+}
+
+void _showNotificationsSheet(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (ctx) => Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Notifications & Reminders',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: ink),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildNotificationItem(
+            icon: Icons.water_drop_outlined,
+            iconColor: deepGreen,
+            title: 'Hydration Goal',
+            desc: 'Stay refreshed! Drink water throughout your day to reach your 8-glass goal.',
+            time: 'Active today',
+          ),
+          const SizedBox(height: 10),
+          _buildNotificationItem(
+            icon: Icons.camera_alt_outlined,
+            iconColor: green,
+            title: 'Smart Plate Logging',
+            desc: 'Don’t forget to scan your meal before or after eating to track calories.',
+            time: 'Daily reminder',
+          ),
+          const SizedBox(height: 10),
+          _buildNotificationItem(
+            icon: Icons.restaurant_menu_outlined,
+            iconColor: Colors.orange,
+            title: 'Recipe Inspiration',
+            desc: 'Explore chef-curated recipes in Find a Recipe or cook with what’s in your fridge.',
+            time: 'Tip of the day',
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: filledStyle,
+              child: const Text('All Caught Up'),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildNotificationItem({
+  required IconData icon,
+  required Color iconColor,
+  required String title,
+  required String desc,
+  required String time,
+}) {
+  return Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF9FAF7),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFEFEFEA)),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: mint,
+          child: Icon(icon, size: 18, color: iconColor),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: ink),
+                  ),
+                  Text(
+                    time,
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                desc,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF555555), height: 1.3),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class MealDetailScreen extends StatelessWidget {
+  final FoodAnalysisResult meal;
+  final String? mealId;
+
+  const MealDetailScreen({super.key, required this.meal, this.mealId});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(meal.mealName),
+        backgroundColor: canvas,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Color(0xFFC62828)),
+            tooltip: 'Delete meal',
+            onPressed: () => _confirmDelete(context),
+          ),
+        ],
+      ),
+      body: ScreenScroll(
+        children: [
+          CardBox(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: mint,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        _guessMealEmoji(meal),
+                        style: const TextStyle(fontSize: 28),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            meal.mealName,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: ink,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_formatTodayDateSpecific(meal.timestamp)} · ${_formatTime(meal.timestamp)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAF7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildMacroColumn('Calories', '${meal.total.calories}', 'kcal'),
+                      _buildMacroColumn('Protein', meal.total.protein.toStringAsFixed(1), 'g'),
+                      _buildMacroColumn('Carbs', meal.total.carbs.toStringAsFixed(1), 'g'),
+                      _buildMacroColumn('Fat', meal.total.fat.toStringAsFixed(1), 'g'),
+                      _buildMacroColumn('Fiber', meal.total.fiber.toStringAsFixed(1), 'g'),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            const Row(
-              children: [
-                MacroMini(label: 'Protein', value: '72 / 90 g', icon: '💪'),
-                MacroMini(label: 'Carbs', value: '180 g', icon: '🌾'),
-                MacroMini(label: 'Fat', value: '48 g', icon: '🥑'),
-              ],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 23),
-      const Text(
-        'A little nourishment for today',
-        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-      ),
-      const SizedBox(height: 10),
-      CardBox(
-        color: const Color(0xFFF1F6E9),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.lightbulb_outline, color: green),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
+          ),
+          const SizedBox(height: 16),
+          SectionTitle('Foods on this plate (${meal.foods.length})'),
+          ...meal.foods.map((food) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: FoodLine.fromFood(food),
+              )),
+          if (meal.uncertaintyNotes != null && meal.uncertaintyNotes!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            CardBox(
+              color: const Color(0xFFFEF3C7),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'DAILY HEALTH TIP  ·  HYDRATION',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: deepGreen,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: .5,
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Text(
-                    'Keeping a glass of water nearby can make it easier to sip throughout your day.',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
-                      color: ink,
+                  const Icon(Icons.info_outline, color: Color(0xFF92400E), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      meal.uncertaintyNotes!,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
                     ),
                   ),
                 ],
               ),
             ),
           ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    final prompt =
+                        'I ate ${meal.mealName} (${meal.total.calories} kcal).\n'
+                        'Foods: ${meal.foods.map((f) => "${f.name} (${f.estimatedGrams.toInt()}g)").join(", ")}.\n'
+                        'Nutrition: ${meal.total.protein.toStringAsFixed(1)}g protein, ${meal.total.carbs.toStringAsFixed(1)}g carbs, ${meal.total.fat.toStringAsFixed(1)}g fat.\n\n'
+                        'How does this fit into my daily nutrition balance? Any tips for my next meal?';
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChatScreen(
+                          initialMealContext: prompt,
+                          asStandalone: true,
+                        ),
+                      ),
+                    );
+                  },
+                  style: outlineStyle,
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  label: const Text('Ask Amudu'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _confirmDelete(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFC62828),
+                    side: const BorderSide(color: Color(0xFFEF9A9A)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Delete meal'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMacroColumn(String label, String value, String unit) {
+    return Column(
+      children: [
+        RichText(
+          text: TextSpan(
+            text: value,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: deepGreen,
+            ),
+            children: [
+              TextSpan(
+                text: ' $unit',
+                style: const TextStyle(fontSize: 10, color: ink, fontWeight: FontWeight.normal),
+              ),
+            ],
+          ),
         ),
-      ),
-      const SizedBox(height: 22),
-      const Text(
-        'Quick actions',
-        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-      ),
-      const SizedBox(height: 10),
-      GridView.count(
-        crossAxisCount: 2,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.8,
-        children: [
-          QuickTile(
-            icon: '📷',
-            title: 'Smart Plate',
-            sub: 'Explore your meal',
-            onTap: () => _message(
-              context,
-              'Choose Smart Plate in the bottom navigation',
-            ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+        ),
+      ],
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Meal'),
+        content: Text('Are you sure you want to delete "${meal.mealName}" from your history?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-          QuickTile(
-            icon: '🧊',
-            title: 'Smart Fridge',
-            sub: 'What can I cook?',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const FridgeScreen()),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              MealStorageService.instance.deleteMealByObject(meal);
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Deleted "${meal.mealName}"')),
+              );
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFC62828),
+              foregroundColor: Colors.white,
             ),
-          ),
-          QuickTile(
-            icon: '✨',
-            title: 'Ask Amudu',
-            sub: 'Food, simply explained',
-            onTap: () =>
-                _message(context, 'Tap AI Chat in the bottom navigation'),
-          ),
-          QuickTile(
-            icon: '🍲',
-            title: 'Find a recipe',
-            sub: 'Cook with what you have',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const RecipeScreen()),
-            ),
+            child: const Text('Delete'),
           ),
         ],
       ),
-      const SizedBox(height: 22),
-      const Text(
-        'Today’s meals',
-        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-      ),
-      const SizedBox(height: 8),
-      const MealRow(
-        emoji: '🥣',
-        meal: 'Breakfast',
-        dish: 'Oats + banana',
-        kcal: '320 kcal',
-      ),
-      const MealRow(
-        emoji: '🍛',
-        meal: 'Lunch',
-        dish: 'Rice + dal + vegetables',
-        kcal: '520 kcal',
-      ),
-      const MealRow(
-        emoji: '🥗',
-        meal: 'Dinner',
-        dish: 'Paneer bowl',
-        kcal: '450 kcal',
-      ),
-      const SizedBox(height: 8),
-    ],
-  );
+    );
   }
 }
 
-class MealPlanScreen extends StatelessWidget {
-  const MealPlanScreen({super.key});
+class MealHistoryScreen extends StatelessWidget {
+  const MealHistoryScreen({super.key});
+
   @override
-  Widget build(BuildContext context) => ScreenScroll(
-    children: [
-      const PageHeading(
-        title: 'Meal Plan',
-        subtitle: 'A little structure, with room to enjoy.',
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Meal History'),
+        backgroundColor: canvas,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: deepGreen),
+            tooltip: 'Refresh meals',
+            onPressed: () => MealStorageService.instance.loadMeals(),
+          ),
+        ],
       ),
-      CardBox(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Sunday, October 4',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: ['M', 'T', 'W', 'T', 'F', 'S', 'S']
-                  .asMap()
-                  .entries
-                  .map(
-                    (e) => Column(
-                      children: [
-                        Text(e.value, style: const TextStyle(fontSize: 11)),
-                        const SizedBox(height: 7),
-                        CircleAvatar(
-                          radius: 15,
-                          backgroundColor: e.key == 6
-                              ? deepGreen
-                              : Colors.transparent,
-                          child: Text(
-                            '${e.key + 1}',
+      body: ListenableBuilder(
+        listenable: MealStorageService.instance,
+        builder: (context, _) {
+          final allMeals = MealStorageService.instance.savedMeals;
+
+          if (allMeals.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('🍽️', style: TextStyle(fontSize: 48)),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No saved meals yet',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: ink),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Scan your plate with Smart Plate to analyze nutrition and save it to your history.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFF687067)),
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: () => Navigator.pop(context),
+                      style: filledStyle,
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text('Return to Home'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final totalCalories = allMeals.fold<int>(0, (sum, m) => sum + m.total.calories);
+          final avgCalories = (totalCalories / allMeals.length).round();
+
+          return ScreenScroll(
+            children: [
+              CardBox(
+                color: mint,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Your Nutrition Diary',
                             style: TextStyle(
-                              color: e.key == 6 ? Colors.white : ink,
-                              fontSize: 12,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: deepGreen,
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 3),
+                          Text(
+                            '${allMeals.length} total meals logged · Avg $avgCalories kcal / meal',
+                            style: const TextStyle(fontSize: 11, color: ink),
+                          ),
+                        ],
+                      ),
                     ),
-                  )
-                  .toList(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${allMeals.length} logged',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: deepGreen,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const SectionTitle('All Recorded Meals'),
+              ...allMeals.map((meal) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: MealRow(
+                    emoji: _guessMealEmoji(meal),
+                    meal: '${_formatTodayDateSpecific(meal.timestamp)} · ${_formatTime(meal.timestamp)}',
+                    dish: meal.mealName,
+                    kcal: '${meal.total.calories} kcal',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MealDetailScreen(
+                          meal: meal,
+                          mealId: MealStorageService.instance.getMealId(meal),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class PlannedMeal {
+  final String id;
+  final int dayOfWeek; // 1 = Mon ... 7 = Sun
+  final String slot; // Breakfast, Lunch, Dinner, Snack
+  final String time;
+  final String name;
+  final int calories;
+  final String emoji;
+  bool isCompleted;
+
+  PlannedMeal({
+    required this.id,
+    required this.dayOfWeek,
+    required this.slot,
+    required this.time,
+    required this.name,
+    required this.calories,
+    this.emoji = '🍲',
+    this.isCompleted = false,
+  });
+}
+
+class MealPlanScreen extends StatefulWidget {
+  final ValueChanged<int>? onNavigateTab;
+  const MealPlanScreen({super.key, this.onNavigateTab});
+
+  @override
+  State<MealPlanScreen> createState() => _MealPlanScreenState();
+}
+
+class _MealPlanScreenState extends State<MealPlanScreen> {
+  late int _selectedDayIndex; // 0 = Mon, ..., 6 = Sun
+  final List<PlannedMeal> _plannedMeals = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final todayWeekday = DateTime.now().weekday; // 1=Mon ... 7=Sun
+    _selectedDayIndex = todayWeekday - 1;
+
+    for (int day = 1; day <= 7; day++) {
+      _plannedMeals.addAll([
+        PlannedMeal(
+          id: 'p_${day}_1',
+          dayOfWeek: day,
+          slot: 'Breakfast',
+          time: '8:00 AM',
+          name: day % 2 == 0 ? 'Steamed Idli with Sambar' : 'Oats with Fruits & Chia',
+          calories: day % 2 == 0 ? 280 : 320,
+          emoji: '🥣',
+        ),
+        PlannedMeal(
+          id: 'p_${day}_2',
+          dayOfWeek: day,
+          slot: 'Lunch',
+          time: '1:00 PM',
+          name: day % 2 == 0 ? 'Paneer Curry with Brown Rice' : 'Quinoa Vegetable Bowl',
+          calories: day % 2 == 0 ? 540 : 490,
+          emoji: '🍛',
+        ),
+        PlannedMeal(
+          id: 'p_${day}_3',
+          dayOfWeek: day,
+          slot: 'Dinner',
+          time: '7:30 PM',
+          name: 'Dal Tadka with Phulkas & Salad',
+          calories: 460,
+          emoji: '🥗',
+        ),
+        PlannedMeal(
+          id: 'p_${day}_4',
+          dayOfWeek: day,
+          slot: 'Snack',
+          time: '4:30 PM',
+          name: 'Greek Yogurt with Almonds',
+          calories: 160,
+          emoji: '🥛',
+        ),
+      ]);
+    }
+  }
+
+  void _showAddMealDialog() {
+    final nameController = TextEditingController();
+    final caloriesController = TextEditingController(text: '350');
+    String slot = 'Lunch';
+    String time = '1:00 PM';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: const Text('Add Meal to Plan'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Meal Name',
+                    hintText: 'e.g. Avocado Toast, Grilled Veggies',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: slot,
+                  decoration: const InputDecoration(labelText: 'Meal Slot'),
+                  items: const [
+                    DropdownMenuItem(value: 'Breakfast', child: Text('🥣 Breakfast')),
+                    DropdownMenuItem(value: 'Lunch', child: Text('🍛 Lunch')),
+                    DropdownMenuItem(value: 'Dinner', child: Text('🥗 Dinner')),
+                    DropdownMenuItem(value: 'Snack', child: Text('🍎 Snack')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) {
+                      setDlgState(() {
+                        slot = val;
+                        if (val == 'Breakfast') time = '8:30 AM';
+                        if (val == 'Lunch') time = '1:00 PM';
+                        if (val == 'Dinner') time = '7:30 PM';
+                        if (val == 'Snack') time = '4:30 PM';
+                      });
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: caloriesController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Estimated Calories (kcal)',
+                    hintText: '350',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final text = nameController.text.trim();
+                if (text.isEmpty) return;
+                final kcal = int.tryParse(caloriesController.text.trim()) ?? 300;
+                final dayNum = _selectedDayIndex + 1;
+                final emoji = slot == 'Breakfast' ? '🥣' : (slot == 'Lunch' ? '🍛' : (slot == 'Dinner' ? '🥗' : '🍎'));
+                setState(() {
+                  _plannedMeals.add(
+                    PlannedMeal(
+                      id: 'p_custom_${DateTime.now().millisecondsSinceEpoch}',
+                      dayOfWeek: dayNum,
+                      slot: slot,
+                      time: time,
+                      name: text,
+                      calories: kcal,
+                      emoji: emoji,
+                    ),
+                  );
+                });
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Added "$text" to $slot plan!')),
+                );
+              },
+              style: filledStyle,
+              child: const Text('Add Meal'),
             ),
           ],
         ),
       ),
-      const SectionTitle('Planned for today'),
-      const MealRow(
-        emoji: '🥣',
-        meal: 'Breakfast · 8:00 AM',
-        dish: 'Oats with fruits',
-        kcal: '320 kcal',
+    );
+  }
+
+  void _showMealOptionsSheet(PlannedMeal item) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      const MealRow(
-        emoji: '🥗',
-        meal: 'Lunch · 1:00 PM',
-        dish: 'Quinoa salad',
-        kcal: '520 kcal',
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(item.emoji, style: const TextStyle(fontSize: 28)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      ),
+                      Text('${item.slot} · ${item.time} · ${item.calories} kcal'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            ListTile(
+              leading: Icon(
+                item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: item.isCompleted ? green : Colors.grey,
+              ),
+              title: Text(item.isCompleted ? 'Mark as incomplete' : 'Mark as eaten'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  item.isCompleted = !item.isCompleted;
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFC62828)),
+              title: const Text('Remove from plan', style: TextStyle(color: Color(0xFFC62828))),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  _plannedMeals.removeWhere((m) => m.id == item.id);
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Removed "${item.name}" from plan')),
+                );
+              },
+            ),
+          ],
+        ),
       ),
-      const MealRow(
-        emoji: '🍛',
-        meal: 'Dinner · 7:30 PM',
-        dish: 'Dal, rice & veggies',
-        kcal: '510 kcal',
-      ),
-      const MealRow(
-        emoji: '🥛',
-        meal: 'Snack · 4:00 PM',
-        dish: 'Greek yogurt',
-        kcal: '150 kcal',
-      ),
-      const SizedBox(height: 12),
-      FilledButton.icon(
-        onPressed: () => _message(context, 'Meal added to your plan'),
-        style: filledStyle,
-        icon: const Icon(Icons.add),
-        label: const Text('Add a meal'),
-      ),
-    ],
-  );
+    );
+  }
+
+  String _getSelectedDayDateString() {
+    final now = DateTime.now();
+    final currentMonday = now.subtract(Duration(days: now.weekday - 1));
+    final selectedDate = currentMonday.add(Duration(days: _selectedDayIndex));
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return '${days[_selectedDayIndex]}, ${months[selectedDate.month - 1]} ${selectedDate.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dayNum = _selectedDayIndex + 1;
+    final mealsForDay = _plannedMeals.where((m) => m.dayOfWeek == dayNum).toList();
+    final totalPlannedCalories = mealsForDay.fold<int>(0, (sum, m) => sum + m.calories);
+
+    const weekDayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    final now = DateTime.now();
+    final currentMonday = now.subtract(Duration(days: now.weekday - 1));
+
+    return ScreenScroll(
+      children: [
+        const PageHeading(
+          title: 'Meal Plan',
+          subtitle: 'A little structure, with room to enjoy.',
+        ),
+        CardBox(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _getSelectedDayDateString(),
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: mint,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '$totalPlannedCalories kcal',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: deepGreen),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: List.generate(7, (i) {
+                  final isSelected = i == _selectedDayIndex;
+                  final dayDate = currentMonday.add(Duration(days: i));
+                  final isToday = dayDate.day == now.day && dayDate.month == now.month && dayDate.year == now.year;
+
+                  return InkWell(
+                    onTap: () => setState(() => _selectedDayIndex = i),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isSelected ? deepGreen : (isToday ? mint : Colors.transparent),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            weekDayLetters[i],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: isSelected ? Colors.white : (isToday ? deepGreen : ink),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${dayDate.day}',
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : ink,
+                              fontWeight: isSelected || isToday ? FontWeight.bold : FontWeight.normal,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Planned for ${_selectedDayIndex == (now.weekday - 1) ? "today" : weekDayLetters[_selectedDayIndex]} (${mealsForDay.length})',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, color: deepGreen),
+              tooltip: 'Add meal',
+              onPressed: _showAddMealDialog,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        if (mealsForDay.isEmpty)
+          CardBox(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  const Text('📅', style: TextStyle(fontSize: 32)),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No meals scheduled for this day',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _showAddMealDialog,
+                    style: filledStyle,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Schedule a meal'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...mealsForDay.map((item) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: MealRow(
+                emoji: item.emoji,
+                meal: '${item.slot} · ${item.time}${item.isCompleted ? " (Eaten)" : ""}',
+                dish: item.name,
+                kcal: '${item.calories} kcal',
+                onTap: () => _showMealOptionsSheet(item),
+              ),
+            );
+          }),
+
+        const SizedBox(height: 14),
+        FilledButton.icon(
+          onPressed: _showAddMealDialog,
+          style: filledStyle,
+          icon: const Icon(Icons.add),
+          label: const Text('Add a meal to plan'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () => widget.onNavigateTab?.call(3),
+          style: outlineStyle,
+          icon: const Icon(Icons.camera_alt_outlined),
+          label: const Text('Log today’s meal with Smart Plate'),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
 }
 
 class SmartPlateScreen extends StatefulWidget {
@@ -2859,9 +3801,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   final VoidCallback? onLogout;
-  const ProfileScreen({super.key, this.onLogout});
+  final ValueChanged<int>? onNavigateTab;
+  const ProfileScreen({super.key, this.onLogout, this.onNavigateTab});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  int _waterGlasses = 6;
+  static const int _waterTarget = 8;
+  int _fiberGrams = 25;
+  String _dietPreference = 'Vegetarian';
+  String _nutritionGoal = 'Maintain weight';
 
   Future<void> _showEditProfileDialog(
     BuildContext context,
@@ -2906,6 +3860,232 @@ class ProfileScreen extends StatelessWidget {
         }
       }
     }
+  }
+
+  void _showWaterTrackerModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('💧', style: TextStyle(fontSize: 40)),
+              const SizedBox(height: 8),
+              const Text(
+                'Daily Hydration Tracker',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Target: $_waterTarget glasses (~2 Litres)',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton.filledTonal(
+                    onPressed: _waterGlasses > 0
+                        ? () {
+                            setState(() => _waterGlasses--);
+                            setSheetState(() {});
+                          }
+                        : null,
+                    icon: const Icon(Icons.remove),
+                  ),
+                  const SizedBox(width: 24),
+                  Text(
+                    '$_waterGlasses',
+                    style: const TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.w900,
+                      color: deepGreen,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  IconButton.filled(
+                    onPressed: () {
+                      setState(() => _waterGlasses++);
+                      setSheetState(() {});
+                    },
+                    style: IconButton.styleFrom(backgroundColor: deepGreen),
+                    icon: const Icon(Icons.add, color: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: filledStyle,
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showFiberTargetDialog() {
+    final controller = TextEditingController(text: '$_fiberGrams');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Daily Fiber Target'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Target (grams)',
+            hintText: 'e.g. 30',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final val = int.tryParse(controller.text.trim());
+              if (val != null && val > 0) {
+                setState(() => _fiberGrams = val);
+              }
+              Navigator.pop(ctx);
+            },
+            style: filledStyle,
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDietPreferenceDialog() {
+    const options = [
+      'Vegetarian',
+      'Non-Vegetarian',
+      'Vegan',
+      'Eggetarian',
+      'Keto',
+      'Pescatarian',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Select Diet Preference'),
+        children: options.map((opt) {
+          final isSelected = opt == _dietPreference;
+          return SimpleDialogOption(
+            onPressed: () {
+              setState(() => _dietPreference = opt);
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Diet preference updated to $opt')),
+              );
+            },
+            child: Row(
+              children: [
+                Icon(
+                  isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: isSelected ? deepGreen : Colors.grey,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  opt,
+                  style: TextStyle(
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                    color: isSelected ? deepGreen : ink,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  void _showNutritionGoalDialog() {
+    const goals = [
+      'Maintain weight',
+      'Healthy weight loss',
+      'Muscle gain & strength',
+      'Clean eating & wellness',
+      'Diabetic friendly',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Select Nutrition Goal'),
+        children: goals.map((goal) {
+          final isSelected = goal == _nutritionGoal;
+          return SimpleDialogOption(
+            onPressed: () {
+              setState(() => _nutritionGoal = goal);
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Nutrition goal updated to $goal')),
+              );
+            },
+            child: Row(
+              children: [
+                Icon(
+                  isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: isSelected ? deepGreen : Colors.grey,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  goal,
+                  style: TextStyle(
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                    color: isSelected ? deepGreen : ink,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  void _showGuestUpgradeDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Account Sign-In'),
+        content: const Text(
+          'You are currently using Amudhu in guest mode. Sign in or register to sync your meal history, saved recipes, and nutrition stats across all devices.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Keep Guest Mode'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              widget.onLogout?.call();
+            },
+            style: filledStyle,
+            child: const Text('Sign In / Register'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -3005,50 +4185,80 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  onPressed: () => _message(context, 'Sign in to customize your profile'),
-                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: _showGuestUpgradeDialog,
+                  tooltip: 'Sign In / Register',
+                  icon: const Icon(Icons.login_rounded, color: deepGreen),
                 ),
               ],
             ),
           ),
         const SectionTitle('Your week'),
-        const CardBox(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              StatMini(label: 'Meals logged', value: '28'),
-              StatMini(label: 'Calories burned', value: '1,620'),
-              StatMini(label: 'Streak', value: '7 days'),
-            ],
-          ),
+        ListenableBuilder(
+          listenable: MealStorageService.instance,
+          builder: (context, _) {
+            final mealsCount = MealStorageService.instance.savedMeals.length;
+            final totalCalories = MealStorageService.instance.savedMeals.fold<int>(0, (s, m) => s + m.total.calories);
+            return InkWell(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MealHistoryScreen()),
+              ),
+              borderRadius: BorderRadius.circular(20),
+              child: CardBox(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    StatMini(label: 'Meals logged', value: '$mealsCount'),
+                    StatMini(label: 'Total kcal logged', value: '$totalCalories'),
+                    const StatMini(label: 'Streak', value: '7 days'),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
         const SectionTitle('Your goals'),
-        const GoalRow(
+        GoalRow(
           icon: Icons.water_drop_outlined,
-          title: 'Drink 8 glasses of water',
-          progress: '6 / 8 glasses',
-          p: .75,
+          title: 'Drink $_waterTarget glasses of water',
+          progress: '$_waterGlasses / $_waterTarget glasses',
+          p: (_waterGlasses / _waterTarget).clamp(0.0, 1.0),
+          onTap: _showWaterTrackerModal,
         ),
-        const GoalRow(
+        const SizedBox(height: 8),
+        GoalRow(
           icon: Icons.grass_outlined,
-          title: 'Eat 30 g of fiber',
-          progress: '25 / 30 g',
-          p: .83,
+          title: 'Eat $_fiberGrams g of fiber',
+          progress: '25 / $_fiberGrams g',
+          p: (25.0 / _fiberGrams).clamp(0.0, 1.0),
+          onTap: _showFiberTargetDialog,
         ),
         const SectionTitle('Preferences'),
         CardBox(
           child: Column(
             children: [
-              const SettingsRow(
+              SettingsRow(
                 icon: Icons.restaurant_menu,
                 title: 'Diet preference',
-                value: 'Vegetarian',
+                value: _dietPreference,
+                onTap: _showDietPreferenceDialog,
               ),
               const Divider(height: 20),
-              const SettingsRow(
+              SettingsRow(
                 icon: Icons.monitor_weight_outlined,
                 title: 'Nutrition goal',
-                value: 'Maintain weight',
+                value: _nutritionGoal,
+                onTap: _showNutritionGoalDialog,
+              ),
+              const Divider(height: 20),
+              SettingsRow(
+                icon: Icons.history,
+                title: 'Logged meals history',
+                value: 'View diary',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const MealHistoryScreen()),
+                ),
               ),
               const Divider(height: 20),
               SettingsRow(
@@ -3078,7 +4288,7 @@ class ProfileScreen extends StatelessWidget {
           onPressed: () async {
             await AuthService.instance.signOut();
             MealStorageService.instance.clear();
-            onLogout?.call();
+            widget.onLogout?.call();
             if (context.mounted) {
               _message(context, 'Logged out successfully');
             }
@@ -5805,8 +7015,44 @@ class _RecipeScreenState extends State<RecipeScreen> {
   }
 }
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _mealReminders = true;
+  bool _hydrationReminders = true;
+  String _units = 'Metric (kg, kcal)';
+
+  void _showPrivacyPolicy(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Privacy & Security Policy'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'Amudhu is committed to protecting your culinary and nutritional privacy.\n\n'
+            '1. Food Images: Scanned plate and fridge photos are analyzed solely for nutritional calculation and ingredient extraction. Images are never sold to third parties.\n\n'
+            '2. Account Data: Passwords are encrypted with bcrypt (12 rounds) and tokens are signed with HMAC-SHA256.\n\n'
+            '3. Offline Resilience: Nutritional calculations can run completely offline via the on-device food database without sending telemetry.\n\n'
+            '4. Ownership: Your meal logs, plans, and saved recipes belong exclusively to you. You can export or delete your data at any time from your profile.',
+            style: TextStyle(fontSize: 12, height: 1.45),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: filledStyle,
+            child: const Text('Understood'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Settings')),
@@ -5816,27 +7062,50 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.hub_outlined,
           title: 'AI Backend Server',
           value: ApiClient.baseUrl,
-          onTap: () => showBackendSettingsModal(context),
+          onTap: () => showBackendSettingsModal(context, onUrlUpdated: () => setState(() {})),
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.notifications_outlined,
           title: 'Meal reminders',
-          value: 'On',
+          value: _mealReminders ? 'On' : 'Off',
+          onTap: () {
+            setState(() => _mealReminders = !_mealReminders);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Meal reminders ${_mealReminders ? "enabled" : "disabled"}')),
+            );
+          },
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.water_drop_outlined,
           title: 'Hydration reminders',
-          value: 'On',
+          value: _hydrationReminders ? 'On' : 'Off',
+          onTap: () {
+            setState(() => _hydrationReminders = !_hydrationReminders);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Hydration reminders ${_hydrationReminders ? "enabled" : "disabled"}')),
+            );
+          },
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.straighten,
           title: 'Units',
-          value: 'Metric',
+          value: _units,
+          onTap: () {
+            setState(() {
+              _units = _units.startsWith('Metric')
+                  ? 'Imperial (lbs, kcal)'
+                  : 'Metric (kg, kcal)';
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Units updated to $_units')),
+            );
+          },
         ),
-        const SettingsRow(
+        SettingsRow(
           icon: Icons.privacy_tip_outlined,
           title: 'Privacy policy',
           value: 'View',
+          onTap: () => _showPrivacyPolicy(context),
         ),
       ],
     ),
@@ -6047,58 +7316,75 @@ class QuickTile extends StatelessWidget {
 
 class MealRow extends StatelessWidget {
   final String emoji, meal, dish, kcal;
+  final VoidCallback? onTap;
   const MealRow({
     super.key,
     required this.emoji,
     required this.meal,
     required this.dish,
     required this.kcal,
+    this.onTap,
   });
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 8),
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: mint,
-            borderRadius: BorderRadius.circular(13),
+  Widget build(BuildContext context) {
+    final card = Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: mint,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Center(
+              child: Text(emoji, style: const TextStyle(fontSize: 23)),
+            ),
           ),
-          child: Center(
-            child: Text(emoji, style: const TextStyle(fontSize: 23)),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                meal,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: deepGreen,
-                  fontWeight: FontWeight.w700,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  meal,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: deepGreen,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              Text(dish, style: const TextStyle(fontWeight: FontWeight.w700)),
-            ],
+                Text(dish, style: const TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
           ),
-        ),
-        Text(
-          kcal,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-        ),
-      ],
-    ),
-  );
+          Text(
+            kcal,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, size: 18, color: green),
+          ],
+        ],
+      ),
+    );
+
+    if (onTap != null) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: card,
+      );
+    }
+    return card;
+  }
 }
 
 class SectionTitle extends StatelessWidget {
@@ -6134,6 +7420,20 @@ class FoodLine extends StatelessWidget {
     this.notes,
     this.macros,
   });
+
+  factory FoodLine.fromFood(FoodItem food, {VoidCallback? onEdit}) {
+    return FoodLine(
+      emoji: food.emoji,
+      name: food.name,
+      portion: '${food.estimatedGrams.toInt()} g',
+      kcal: '${food.calories} kcal',
+      confidence: food.confidence,
+      alternatives: food.alternatives,
+      notes: food.notes,
+      macros: 'P: ${food.protein.toStringAsFixed(1)}g · C: ${food.carbs.toStringAsFixed(1)}g · F: ${food.fat.toStringAsFixed(1)}g',
+      onEdit: onEdit,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => InkWell(
@@ -6197,12 +7497,6 @@ class FoodLine extends StatelessWidget {
                   onPressed: onEdit,
                   tooltip: 'Edit portion or item',
                   icon: const Icon(Icons.edit_outlined, size: 18, color: deepGreen),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ] else ...[
-                IconButton(
-                  onPressed: () => _message(context, 'Edit portion'),
-                  icon: const Icon(Icons.more_horiz),
                   visualDensity: VisualDensity.compact,
                 ),
               ],
@@ -6352,46 +7646,63 @@ class GoalRow extends StatelessWidget {
   final IconData icon;
   final String title, progress;
   final double p;
+  final VoidCallback? onTap;
   const GoalRow({
     super.key,
     required this.icon,
     required this.title,
     required this.progress,
     required this.p,
+    this.onTap,
   });
   @override
-  Widget build(BuildContext context) => CardBox(
-    child: Column(
-      children: [
-        Row(
-          children: [
-            Icon(icon, color: green),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final card = CardBox(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: green),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
-            ),
-            Text(
-              progress,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-            value: p,
-            minHeight: 6,
-            color: green,
-            backgroundColor: mint,
+              Text(
+                progress,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.touch_app_outlined, size: 14, color: deepGreen),
+              ],
+            ],
           ),
-        ),
-      ],
-    ),
-  );
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: p,
+              minHeight: 6,
+              color: green,
+              backgroundColor: mint,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap != null) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: card,
+      );
+    }
+    return card;
+  }
 }
 
 class SettingsRow extends StatelessWidget {

@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const mealRoutes = require('./routes/meals');
@@ -22,10 +23,19 @@ app.use(cors({ origin: (origin, callback) => {
     ? origin.startsWith(allowed.slice(0, -1)) : origin === allowed)) return callback(null, true);
   return callback(null, false);
 } }));
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '10mb' }));
+
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many analysis requests. Please try again shortly.', code: 'RATE_LIMIT_EXCEEDED' },
+});
 
 const upload = multer({
-  storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype?.startsWith('image/') || file.mimetype === 'application/octet-stream' ||
       /\.(jpe?g|png|webp|heic|bmp)$/i.test(file.originalname || '')) cb(null, true);
@@ -46,7 +56,7 @@ app.use(['/chat', '/api/chat'], chatRoutes);
 app.use(['/recipes', '/api/recipes'], recipeRoutes);
 
 // Smart Plate: Meal Analysis
-app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async (req, res, next) => {
+app.post(['/analyze-plate', '/api/analyze-plate'], aiLimiter, upload.single('image'), async (req, res, next) => {
   let imageBuffer; let mimeType = 'image/jpeg';
   if (req.file) { imageBuffer = req.file.buffer; mimeType = req.file.mimetype || mimeType; }
   else if (req.body?.image) {
@@ -69,12 +79,22 @@ app.post(['/analyze-plate', '/api/analyze-plate'], upload.single('image'), async
 });
 
 app.post(['/recalculate', '/api/recalculate'], (req, res) => {
-  if (!Array.isArray(req.body?.foods) || req.body.foods.length > 100) return res.status(400).json({ error: 'Foods array is required', code: 'VALIDATION_ERROR' });
+  if (!Array.isArray(req.body?.foods) || req.body.foods.length === 0 || req.body.foods.length > 100) {
+    return res.status(400).json({ error: 'Foods array is required and must contain 1 to 100 items', code: 'VALIDATION_ERROR' });
+  }
+  for (const food of req.body.foods) {
+    if (!food || typeof food.name !== 'string' || !food.name.trim()) {
+      return res.status(400).json({ error: 'Each food item must have a valid name', code: 'VALIDATION_ERROR' });
+    }
+    if (food.estimatedGrams !== undefined && (typeof food.estimatedGrams !== 'number' || food.estimatedGrams < 0 || Number.isNaN(food.estimatedGrams))) {
+      return res.status(400).json({ error: 'Food estimatedGrams must be a non-negative number', code: 'VALIDATION_ERROR' });
+    }
+  }
   return res.json({ success: true, ...calculateMealNutrition(req.body.foods), analysisSource: 'user_edited', timestamp: new Date().toISOString() });
 });
 
 // Fridge to Recipe: Scan fridge photo to extract ingredients
-app.post(['/api/analyze-fridge', '/v1/analyze-fridge'], upload.single('image'), async (req, res, next) => {
+app.post(['/api/analyze-fridge', '/v1/analyze-fridge'], aiLimiter, upload.single('image'), async (req, res, next) => {
   let imageBuffer;
   let mimeType = 'image/jpeg';
   if (req.file) {
@@ -115,7 +135,7 @@ app.post(['/api/analyze-fridge', '/v1/analyze-fridge'], upload.single('image'), 
 });
 
 // Fridge to Recipe: Generate recipes based on user ingredients
-app.post(['/api/generate-recipes', '/v1/generate-recipes'], async (req, res) => {
+app.post(['/api/generate-recipes', '/v1/generate-recipes'], aiLimiter, async (req, res) => {
   const ingredients = Array.isArray(req.body?.ingredients) ? req.body.ingredients : [];
   if (ingredients.length === 0) {
     return res.status(400).json({ error: 'Please provide at least one ingredient to generate recipes.', code: 'INGREDIENTS_REQUIRED' });
