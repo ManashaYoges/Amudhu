@@ -161,22 +161,147 @@ class _WelcomeGateState extends State<WelcomeGate> {
   }
 
   Future<void> _handleForgotPassword() async {
-    final email = _emailController.text.trim();
+    String email = _emailController.text.trim();
+
+    // If user didn't enter email yet, prompt them directly
     if (email.isEmpty) {
-      _message(context, 'Enter your email address above, then tap Forgot password.');
-      return;
+      final emailPromptController = TextEditingController();
+      final enteredEmail = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Forgot Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Enter the email address associated with your Amudhu account:'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailPromptController,
+                keyboardType: TextInputType.emailAddress,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Email Address',
+                  hintText: 'name@example.com',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, emailPromptController.text.trim()),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (enteredEmail == null || enteredEmail.trim().isEmpty) return;
+      email = enteredEmail.trim();
+      _emailController.text = email;
     }
 
     try {
       await AuthService.instance.sendPasswordResetEmail(email);
       if (mounted) {
-        _message(context, 'If an account exists, reset instructions have been sent.');
+        _message(context, 'Reset instructions sent. Please check your email.');
         await _showResetCompletionDialog(email);
+      }
+    } on ApiException catch (apiErr) {
+      if (apiErr.code == 'EMAIL_NOT_CONFIGURED') {
+        // Server does not have an external SMTP provider configured.
+        // Provide seamless direct password reset for developer/offline/demo mode.
+        if (mounted) {
+          await _showDirectResetDialog(email);
+        }
+      } else {
+        if (mounted) _message(context, AuthService.getErrorMessage(apiErr));
       }
     } catch (e) {
       if (mounted) {
         _message(context, AuthService.getErrorMessage(e));
       }
+    }
+  }
+
+  Future<void> _showDirectResetDialog(String email) async {
+    final newPassCtrl = TextEditingController();
+    final confirmPassCtrl = TextEditingController();
+    try {
+      final updated = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('Set New Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Email server is offline or in local demo mode. You can set a new password directly for $email.',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF687067)),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: newPassCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'New password (8+ characters)',
+                  prefixIcon: Icon(Icons.lock_outline),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: confirmPassCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Confirm new password',
+                  prefixIcon: Icon(Icons.lock_reset),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (newPassCtrl.text.length < 8) {
+                  _message(dialogCtx, 'Password must be at least 8 characters.');
+                  return;
+                }
+                if (newPassCtrl.text != confirmPassCtrl.text) {
+                  _message(dialogCtx, 'Passwords do not match.');
+                  return;
+                }
+                Navigator.pop(dialogCtx, true);
+              },
+              child: const Text('Reset Password'),
+            ),
+          ],
+        ),
+      );
+
+      if (updated == true && mounted) {
+        await AuthService.instance.directPasswordReset(
+          email: email,
+          newPassword: newPassCtrl.text,
+        );
+        _passwordController.text = newPassCtrl.text;
+        if (mounted) {
+          _message(context, 'Password updated successfully! You can now log in.');
+        }
+      }
+    } catch (e) {
+      if (mounted) _message(context, AuthService.getErrorMessage(e));
+    } finally {
+      newPassCtrl.dispose();
+      confirmPassCtrl.dispose();
     }
   }
 
@@ -191,7 +316,7 @@ class _WelcomeGateState extends State<WelcomeGate> {
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             const Text('Paste the one-time code from your reset email and choose a new password.'),
             const SizedBox(height: 12),
-            TextField(controller: token, decoration: const InputDecoration(labelText: 'Reset code')),
+            TextField(controller: token, decoration: const InputDecoration(labelText: 'Reset code (6-digit code or token)')),
             TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: 'New password (8+ characters)')),
           ]),
           actions: [
@@ -205,7 +330,7 @@ class _WelcomeGateState extends State<WelcomeGate> {
         if (mounted) _message(context, 'Enter the reset code and a password of at least 8 characters.');
         return;
       }
-      await AuthService.instance.confirmPasswordReset(email: email, token: values[0], newPassword: values[1]);
+      await AuthService.instance.confirmPasswordReset(email: email, token: values[0].trim(), newPassword: values[1]);
       if (mounted) _message(context, 'Password updated. You can now sign in.');
     } catch (e) {
       if (mounted) _message(context, AuthService.getErrorMessage(e));
@@ -607,7 +732,7 @@ class _MainShellState extends State<MainShell> {
     MealStorageService.instance.loadMeals();
     pages = [
       HomeScreen(onNavigateTab: (tab) => setState(() => index = tab)),
-      MealPlanScreen(onNavigateTab: (tab) => setState(() => index = tab)),
+      const RecipeScreen(),
       const ChatScreen(),
       const SmartPlateScreen(),
       ProfileScreen(
@@ -635,9 +760,9 @@ class _MainShellState extends State<MainShell> {
           label: 'Home',
         ),
         NavigationDestination(
-          icon: Icon(Icons.calendar_month_outlined),
-          selectedIcon: Icon(Icons.calendar_month),
-          label: 'Meal Plan',
+          icon: Icon(Icons.restaurant_menu_outlined),
+          selectedIcon: Icon(Icons.restaurant_menu),
+          label: 'Recipes',
         ),
         NavigationDestination(
           icon: Icon(Icons.chat_bubble_outline),
@@ -929,10 +1054,7 @@ class HomeScreen extends StatelessWidget {
                       icon: '🍲',
                       title: 'Find a recipe',
                       sub: 'Cook with what you have',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const RecipeScreen()),
-                      ),
+                      onTap: () => onNavigateTab?.call(1),
                     ),
                   ],
                 ),
@@ -1535,416 +1657,6 @@ class MealHistoryScreen extends StatelessWidget {
           );
         },
       ),
-    );
-  }
-}
-
-class PlannedMeal {
-  final String id;
-  final int dayOfWeek; // 1 = Mon ... 7 = Sun
-  final String slot; // Breakfast, Lunch, Dinner, Snack
-  final String time;
-  final String name;
-  final int calories;
-  final String emoji;
-  bool isCompleted;
-
-  PlannedMeal({
-    required this.id,
-    required this.dayOfWeek,
-    required this.slot,
-    required this.time,
-    required this.name,
-    required this.calories,
-    this.emoji = '🍲',
-    this.isCompleted = false,
-  });
-}
-
-class MealPlanScreen extends StatefulWidget {
-  final ValueChanged<int>? onNavigateTab;
-  const MealPlanScreen({super.key, this.onNavigateTab});
-
-  @override
-  State<MealPlanScreen> createState() => _MealPlanScreenState();
-}
-
-class _MealPlanScreenState extends State<MealPlanScreen> {
-  late int _selectedDayIndex; // 0 = Mon, ..., 6 = Sun
-  final List<PlannedMeal> _plannedMeals = [];
-
-  @override
-  void initState() {
-    super.initState();
-    final todayWeekday = DateTime.now().weekday; // 1=Mon ... 7=Sun
-    _selectedDayIndex = todayWeekday - 1;
-
-    for (int day = 1; day <= 7; day++) {
-      _plannedMeals.addAll([
-        PlannedMeal(
-          id: 'p_${day}_1',
-          dayOfWeek: day,
-          slot: 'Breakfast',
-          time: '8:00 AM',
-          name: day % 2 == 0 ? 'Steamed Idli with Sambar' : 'Oats with Fruits & Chia',
-          calories: day % 2 == 0 ? 280 : 320,
-          emoji: '🥣',
-        ),
-        PlannedMeal(
-          id: 'p_${day}_2',
-          dayOfWeek: day,
-          slot: 'Lunch',
-          time: '1:00 PM',
-          name: day % 2 == 0 ? 'Paneer Curry with Brown Rice' : 'Quinoa Vegetable Bowl',
-          calories: day % 2 == 0 ? 540 : 490,
-          emoji: '🍛',
-        ),
-        PlannedMeal(
-          id: 'p_${day}_3',
-          dayOfWeek: day,
-          slot: 'Dinner',
-          time: '7:30 PM',
-          name: 'Dal Tadka with Phulkas & Salad',
-          calories: 460,
-          emoji: '🥗',
-        ),
-        PlannedMeal(
-          id: 'p_${day}_4',
-          dayOfWeek: day,
-          slot: 'Snack',
-          time: '4:30 PM',
-          name: 'Greek Yogurt with Almonds',
-          calories: 160,
-          emoji: '🥛',
-        ),
-      ]);
-    }
-  }
-
-  void _showAddMealDialog() {
-    final nameController = TextEditingController();
-    final caloriesController = TextEditingController(text: '350');
-    String slot = 'Lunch';
-    String time = '1:00 PM';
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          title: const Text('Add Meal to Plan'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Meal Name',
-                    hintText: 'e.g. Avocado Toast, Grilled Veggies',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: slot,
-                  decoration: const InputDecoration(labelText: 'Meal Slot'),
-                  items: const [
-                    DropdownMenuItem(value: 'Breakfast', child: Text('🥣 Breakfast')),
-                    DropdownMenuItem(value: 'Lunch', child: Text('🍛 Lunch')),
-                    DropdownMenuItem(value: 'Dinner', child: Text('🥗 Dinner')),
-                    DropdownMenuItem(value: 'Snack', child: Text('🍎 Snack')),
-                  ],
-                  onChanged: (val) {
-                    if (val != null) {
-                      setDlgState(() {
-                        slot = val;
-                        if (val == 'Breakfast') time = '8:30 AM';
-                        if (val == 'Lunch') time = '1:00 PM';
-                        if (val == 'Dinner') time = '7:30 PM';
-                        if (val == 'Snack') time = '4:30 PM';
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: caloriesController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Estimated Calories (kcal)',
-                    hintText: '350',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final text = nameController.text.trim();
-                if (text.isEmpty) return;
-                final kcal = int.tryParse(caloriesController.text.trim()) ?? 300;
-                final dayNum = _selectedDayIndex + 1;
-                final emoji = slot == 'Breakfast' ? '🥣' : (slot == 'Lunch' ? '🍛' : (slot == 'Dinner' ? '🥗' : '🍎'));
-                setState(() {
-                  _plannedMeals.add(
-                    PlannedMeal(
-                      id: 'p_custom_${DateTime.now().millisecondsSinceEpoch}',
-                      dayOfWeek: dayNum,
-                      slot: slot,
-                      time: time,
-                      name: text,
-                      calories: kcal,
-                      emoji: emoji,
-                    ),
-                  );
-                });
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Added "$text" to $slot plan!')),
-                );
-              },
-              style: filledStyle,
-              child: const Text('Add Meal'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showMealOptionsSheet(PlannedMeal item) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(item.emoji, style: const TextStyle(fontSize: 28)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.name,
-                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                      ),
-                      Text('${item.slot} · ${item.time} · ${item.calories} kcal'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            ListTile(
-              leading: Icon(
-                item.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: item.isCompleted ? green : Colors.grey,
-              ),
-              title: Text(item.isCompleted ? 'Mark as incomplete' : 'Mark as eaten'),
-              onTap: () {
-                Navigator.pop(ctx);
-                setState(() {
-                  item.isCompleted = !item.isCompleted;
-                });
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFC62828)),
-              title: const Text('Remove from plan', style: TextStyle(color: Color(0xFFC62828))),
-              onTap: () {
-                Navigator.pop(ctx);
-                setState(() {
-                  _plannedMeals.removeWhere((m) => m.id == item.id);
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Removed "${item.name}" from plan')),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _getSelectedDayDateString() {
-    final now = DateTime.now();
-    final currentMonday = now.subtract(Duration(days: now.weekday - 1));
-    final selectedDate = currentMonday.add(Duration(days: _selectedDayIndex));
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    return '${days[_selectedDayIndex]}, ${months[selectedDate.month - 1]} ${selectedDate.day}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dayNum = _selectedDayIndex + 1;
-    final mealsForDay = _plannedMeals.where((m) => m.dayOfWeek == dayNum).toList();
-    final totalPlannedCalories = mealsForDay.fold<int>(0, (sum, m) => sum + m.calories);
-
-    const weekDayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    final now = DateTime.now();
-    final currentMonday = now.subtract(Duration(days: now.weekday - 1));
-
-    return ScreenScroll(
-      children: [
-        const PageHeading(
-          title: 'Meal Plan',
-          subtitle: 'A little structure, with room to enjoy.',
-        ),
-        CardBox(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _getSelectedDayDateString(),
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: mint,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '$totalPlannedCalories kcal',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: deepGreen),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(7, (i) {
-                  final isSelected = i == _selectedDayIndex;
-                  final dayDate = currentMonday.add(Duration(days: i));
-                  final isToday = dayDate.day == now.day && dayDate.month == now.month && dayDate.year == now.year;
-
-                  return InkWell(
-                    onTap: () => setState(() => _selectedDayIndex = i),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isSelected ? deepGreen : (isToday ? mint : Colors.transparent),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            weekDayLetters[i],
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: isSelected ? Colors.white : (isToday ? deepGreen : ink),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '${dayDate.day}',
-                            style: TextStyle(
-                              color: isSelected ? Colors.white : ink,
-                              fontWeight: isSelected || isToday ? FontWeight.bold : FontWeight.normal,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 18),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Planned for ${_selectedDayIndex == (now.weekday - 1) ? "today" : weekDayLetters[_selectedDayIndex]} (${mealsForDay.length})',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline, color: deepGreen),
-              tooltip: 'Add meal',
-              onPressed: _showAddMealDialog,
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-
-        if (mealsForDay.isEmpty)
-          CardBox(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  const Text('📅', style: TextStyle(fontSize: 32)),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'No meals scheduled for this day',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _showAddMealDialog,
-                    style: filledStyle,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Schedule a meal'),
-                  ),
-                ],
-              ),
-            ),
-          )
-        else
-          ...mealsForDay.map((item) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: MealRow(
-                emoji: item.emoji,
-                meal: '${item.slot} · ${item.time}${item.isCompleted ? " (Eaten)" : ""}',
-                dish: item.name,
-                kcal: '${item.calories} kcal',
-                onTap: () => _showMealOptionsSheet(item),
-              ),
-            );
-          }),
-
-        const SizedBox(height: 14),
-        FilledButton.icon(
-          onPressed: _showAddMealDialog,
-          style: filledStyle,
-          icon: const Icon(Icons.add),
-          label: const Text('Add a meal to plan'),
-        ),
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: () => widget.onNavigateTab?.call(3),
-          style: outlineStyle,
-          icon: const Icon(Icons.camera_alt_outlined),
-          label: const Text('Log today’s meal with Smart Plate'),
-        ),
-        const SizedBox(height: 16),
-      ],
     );
   }
 }

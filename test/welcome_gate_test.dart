@@ -58,7 +58,7 @@ void main() {
     expect(find.byType(MainShell), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('Home'), findsWidgets);
-    expect(find.text('Meal Plan'), findsWidgets);
+    expect(find.text('Recipes'), findsWidgets);
     expect(find.text('Profile'), findsWidgets);
   });
 }

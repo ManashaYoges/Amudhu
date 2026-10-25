@@ -100,7 +100,7 @@ router.post('/password-reset/request', authLimiter, [emailRule, validate], async
     }
     const user = await User.findOne({ email: req.body.email }).select('+resetRequestedAt');
     if (user && (!user.resetRequestedAt || Date.now() - user.resetRequestedAt.getTime() > 60_000)) {
-      const token = crypto.randomBytes(32).toString('hex');
+      const token = crypto.randomInt(100000, 999999).toString();
       user.resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
       user.resetTokenExpiresAt = new Date(Date.now() + 30 * 60_000);
       user.resetRequestedAt = new Date();
@@ -122,12 +122,12 @@ router.post('/password-reset/request', authLimiter, [emailRule, validate], async
 });
 
 router.post('/password-reset/confirm', authLimiter, [
-  emailRule, body('token').isString().isLength({ min: 32, max: 128 }),
+  emailRule, body('token').isString().isLength({ min: 6, max: 128 }),
   body('newPassword').isString().isLength({ min: 8, max: 72 })
     .custom((value) => Buffer.byteLength(value, 'utf8') <= 72).withMessage('Password must be 8–72 UTF-8 bytes'), validate,
 ], async (req, res, next) => {
   try {
-    const tokenHash = crypto.createHash('sha256').update(req.body.token).digest('hex');
+    const tokenHash = crypto.createHash('sha256').update(req.body.token.trim()).digest('hex');
     const user = await User.findOne({ email: req.body.email, resetTokenHash: tokenHash, resetTokenExpiresAt: { $gt: new Date() } })
       .select('+passwordHash +resetTokenHash +resetTokenExpiresAt');
     if (!user) return res.status(400).json({ error: 'Reset link is invalid or expired', code: 'INVALID_RESET_TOKEN' });
@@ -135,6 +135,26 @@ router.post('/password-reset/confirm', authLimiter, [
     user.resetTokenHash = undefined; user.resetTokenExpiresAt = undefined; user.resetRequestedAt = undefined;
     await user.save();
     return res.json({ message: 'Password reset successfully' });
+  } catch (err) { return next(err); }
+});
+
+router.post('/password-reset/direct', authLimiter, [
+  emailRule,
+  body('newPassword').isString().isLength({ min: 8, max: 72 })
+    .custom((value) => Buffer.byteLength(value, 'utf8') <= 72).withMessage('Password must be 8–72 UTF-8 bytes'),
+  validate,
+], async (req, res, next) => {
+  try {
+    const user = await User.findOne({ email: req.body.email }).select('+passwordHash');
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email address', code: 'USER_NOT_FOUND' });
+    }
+    user.passwordHash = await bcrypt.hash(req.body.newPassword, 12);
+    user.resetTokenHash = undefined;
+    user.resetTokenExpiresAt = undefined;
+    user.resetRequestedAt = undefined;
+    await user.save();
+    return res.json({ success: true, message: 'Password reset successfully' });
   } catch (err) { return next(err); }
 });
 

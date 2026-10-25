@@ -85,6 +85,13 @@ class AuthService {
     });
   }
 
+  Future<void> directPasswordReset({required String email, required String newPassword}) async {
+    await _api.post('/api/auth/password-reset/direct', authenticated: false, body: {
+      'email': email.trim(),
+      'newPassword': newPassword,
+    });
+  }
+
   Future<void> updateDisplayName(String displayName) async {
     final response = await _api.patch('/api/auth/me', body: {'displayName': displayName.trim()});
     final user = response['user'] as Map<String, dynamic>;

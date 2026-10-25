@@ -99,13 +99,83 @@ class RecipeGenerationService {
     }
   }
 
+  static String _stemWord(String word) {
+    String w = word.toLowerCase().trim();
+    if (w.endsWith('ies') && w.length > 4) return '${w.substring(0, w.length - 3)}y';
+    if (w.endsWith('es') && w.length > 4) return w.substring(0, w.length - 2);
+    if (w.endsWith('s') && !w.endsWith('ss') && w.length > 3) return w.substring(0, w.length - 1);
+    return w;
+  }
+
+  static const Map<String, List<String>> _culinarySynonyms = {
+    'tomato': ['tomato', 'tomatoes', 'tamatar'],
+    'onion': ['onion', 'onions', 'pyaz', 'shallot', 'shallots', 'scallion', 'scallions', 'spring onion'],
+    'potato': ['potato', 'potatoes', 'aloo', 'batata'],
+    'spinach': ['spinach', 'palak', 'greens', 'keerai', 'saag'],
+    'egg': ['egg', 'eggs', 'anda', 'boiled egg', 'egg white', 'omelette'],
+    'paneer': ['paneer', 'cottage cheese', 'chenna'],
+    'curd': ['curd', 'yogurt', 'yoghurt', 'dahi'],
+    'coriander': ['coriander', 'cilantro', 'dhania', 'kothmir', 'herbs', 'parsley'],
+    'chilli': ['chilli', 'chili', 'chilies', 'chillies', 'green chilli', 'red chilli', 'mirch', 'mirchi', 'jalapeno', 'capsicum', 'bell pepper', 'peppers'],
+    'garlic': ['garlic', 'garlic cloves', 'lahsun'],
+    'ginger': ['ginger', 'ginger root', 'adrak'],
+    'bread': ['bread', 'bread slices', 'toast', 'loaf', 'pav', 'bun'],
+    'rice': ['rice', 'cooked rice', 'steamed rice', 'basmati', 'chawal'],
+    'chicken': ['chicken', 'chicken breast', 'chicken pieces', 'poultry', 'murgh'],
+    'cheese': ['cheese', 'cheddar', 'mozzarella', 'parmesan', 'processed cheese'],
+    'milk': ['milk', 'dairy milk', 'doodh', 'cream'],
+    'lemon': ['lemon', 'lime', 'lemon juice', 'nimbu'],
+    'pasta': ['pasta', 'macaroni', 'penne', 'spaghetti', 'fusilli', 'noodles'],
+    'butter': ['butter', 'ghee', 'makhan'],
+    'lentil': ['lentil', 'lentils', 'dal', 'daal', 'toor dal', 'moong dal', 'chana dal'],
+    'flour': ['flour', 'atta', 'wheat flour', 'maida', 'all purpose flour', 'besan'],
+    'mushroom': ['mushroom', 'mushrooms', 'button mushroom'],
+    'carrot': ['carrot', 'carrots', 'gajar'],
+    'peas': ['peas', 'green peas', 'matar'],
+    'cucumber': ['cucumber', 'kheera', 'kakdi'],
+  };
+
+  static bool _isIngredientMatch(String userIng, String recipeIng) {
+    final u = userIng.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), ' ').trim();
+    final r = recipeIng.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), ' ').trim();
+    if (u.isEmpty || r.isEmpty) return false;
+    if (u == r || r.contains(u) || u.contains(r)) return true;
+
+    final uTokens = u.split(RegExp(r'\s+')).where((t) => t.length > 2).toList();
+    final rTokens = r.split(RegExp(r'\s+')).where((t) => t.length > 2).toList();
+
+    for (final ut in uTokens) {
+      final sUt = _stemWord(ut);
+      for (final rt in rTokens) {
+        final sRt = _stemWord(rt);
+        if (sUt == sRt || sRt.contains(sUt) || sUt.contains(sRt)) return true;
+      }
+    }
+
+    for (final ut in uTokens) {
+      final sUt = _stemWord(ut);
+      for (final entry in _culinarySynonyms.entries) {
+        if (entry.key == sUt || entry.value.any((v) => _stemWord(v) == sUt)) {
+          for (final rt in rTokens) {
+            final sRt = _stemWord(rt);
+            if (entry.value.any((v) => _stemWord(v) == sRt || sRt.contains(_stemWord(v)) || _stemWord(v).contains(sRt))) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
   /// Match available ingredients against a curated recipe catalog and rank by ingredient match.
   Future<List<Recipe>> _performMockGeneration(
       List<DetectedIngredient> userIngredients) async {
     await Future.delayed(const Duration(milliseconds: 600));
 
-    final normalizedUser =
-        userIngredients.map((i) => i.name.trim().toLowerCase()).toList();
+    final userNames =
+        userIngredients.map((i) => i.name.trim()).toList();
 
     final allCatalog = getCatalogRecipes();
 
@@ -113,9 +183,7 @@ class RecipeGenerationService {
     final scoredRecipes = allCatalog.map((template) {
       int matched = 0;
       final updatedIngredients = template.ingredients.map((ing) {
-        final ingName = ing.name.toLowerCase();
-        final isMatch = normalizedUser.any((userIng) =>
-            ingName.contains(userIng) || userIng.contains(ingName));
+        final isMatch = userNames.any((userIng) => _isIngredientMatch(userIng, ing.name));
         if (isMatch) matched++;
         return ing.copyWith(isFromFridge: isMatch);
       }).toList();
@@ -427,6 +495,458 @@ class RecipeGenerationService {
           carbs: 42.0,
           fat: 7.0,
           fiber: 1.2,
+        ),
+      ),
+      const Recipe(
+        id: 'homestyle_chicken_curry',
+        name: 'Homestyle Spiced Chicken Curry',
+        emoji: '🍗',
+        description: 'Tender chicken pieces simmered in a fragrant onion, tomato, and garlic curry gravy.',
+        prepTime: '10 min',
+        cookTime: '20 min',
+        totalTime: '30 min',
+        servings: 3,
+        difficulty: 'Medium',
+        cuisine: 'Indian',
+        isVegetarian: false,
+        videoUrl: 'https://www.youtube.com/results?search_query=Homestyle+Chicken+Curry+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Chicken', quantity: '350 g cut into pieces'),
+          RecipeIngredient(name: 'Onions', quantity: '2 medium finely sliced'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '2 ripe pureed'),
+          RecipeIngredient(name: 'Ginger', quantity: '1 tbsp minced'),
+          RecipeIngredient(name: 'Garlic', quantity: '1 tbsp minced'),
+          RecipeIngredient(name: 'Green Chillies', quantity: '2 slit'),
+          RecipeIngredient(name: 'Cooking Oil', quantity: '2 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Garam Masala & Turmeric', quantity: '1 tsp each', isFromFridge: false),
+          RecipeIngredient(name: 'Salt', quantity: 'To taste', isFromFridge: false),
+        ],
+        steps: [
+          'Heat oil in a heavy-bottomed pot. Add sliced onions and cook until golden brown.',
+          'Stir in minced ginger, garlic, and green chillies. Sauté for 1 minute until fragrant.',
+          'Add pureed tomatoes, turmeric, garam masala, and salt. Cook until oil separates from the masala.',
+          'Add chicken pieces. Sear on high heat for 3 minutes to lock in moisture.',
+          'Add 1/2 cup water, cover tightly, and simmer on low-medium flame for 15 minutes until chicken is tender.',
+          'Garnish with fresh coriander and serve steaming hot with rice or roti.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 340,
+          protein: 32.0,
+          carbs: 8.5,
+          fat: 18.0,
+          fiber: 2.2,
+        ),
+      ),
+      const Recipe(
+        id: 'crispy_pan_seared_chicken',
+        name: 'Lemon Garlic Pan-Seared Chicken',
+        emoji: '🥩',
+        description: 'Juicy, succulent chicken cutlets seared golden with fresh lemon, garlic, and cracked pepper.',
+        prepTime: '5 min',
+        cookTime: '12 min',
+        totalTime: '17 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Continental',
+        isVegetarian: false,
+        videoUrl: 'https://www.youtube.com/results?search_query=Pan+Seared+Lemon+Garlic+Chicken+Breast+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Chicken', quantity: '2 chicken breasts / cutlets'),
+          RecipeIngredient(name: 'Garlic', quantity: '4 cloves minced'),
+          RecipeIngredient(name: 'Lemon', quantity: '1 whole juiced'),
+          RecipeIngredient(name: 'Olive Oil / Butter', quantity: '1.5 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt & Black Pepper', quantity: '1/2 tsp each', isFromFridge: false),
+        ],
+        steps: [
+          'Pat chicken breasts dry with paper towels. Season both sides generously with salt and black pepper.',
+          'Heat olive oil or butter in a skillet over medium-high heat until shimmering.',
+          'Place chicken in skillet. Sear undisturbed for 5-6 minutes until a golden crust develops.',
+          'Flip chicken, add minced garlic and lemon juice around the pan.',
+          'Spoon sizzling garlic lemon pan juices over chicken for 4-5 minutes until internal temp reaches 165°F.',
+          'Rest for 3 minutes before slicing. Serve with a fresh side salad or steamed vegetables.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 280,
+          protein: 36.0,
+          carbs: 2.5,
+          fat: 12.0,
+          fiber: 0.5,
+        ),
+      ),
+      const Recipe(
+        id: 'creamy_alfredo_pasta',
+        name: 'Creamy Garlic Alfredo Pasta',
+        emoji: '🍝',
+        description: 'Al dente pasta tossed in a velvety, rich garlic and cheese sauce with cracked pepper.',
+        prepTime: '5 min',
+        cookTime: '15 min',
+        totalTime: '20 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Italian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Creamy+Garlic+Alfredo+Pasta+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Pasta', quantity: '200 g (penne, spaghetti, or macaroni)'),
+          RecipeIngredient(name: 'Milk / Cream', quantity: '1 cup'),
+          RecipeIngredient(name: 'Garlic', quantity: '4 cloves minced'),
+          RecipeIngredient(name: 'Cheese', quantity: '50 g grated'),
+          RecipeIngredient(name: 'Butter', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt & Black Pepper', quantity: 'To taste', isFromFridge: false),
+        ],
+        steps: [
+          'Boil pasta in salted water until al dente. Reserve 1/4 cup pasta water, then drain.',
+          'Melt butter in a skillet over medium heat. Sauté minced garlic for 1 minute until fragrant.',
+          'Pour in milk or cream. Bring to a gentle simmer for 3 minutes.',
+          'Lower flame and stir in grated cheese until sauce turns smooth and velvety.',
+          'Toss in cooked pasta and reserved pasta water. Coat every strand evenly.',
+          'Season with black pepper and serve hot.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 430,
+          protein: 15.0,
+          carbs: 54.0,
+          fat: 18.0,
+          fiber: 3.0,
+        ),
+      ),
+      const Recipe(
+        id: 'tomato_basil_garlic_pasta',
+        name: 'Fresh Tomato & Garlic Herb Pasta',
+        emoji: '🍝',
+        description: 'Pasta coated in sweet crushed ripe tomatoes, olive oil, minced garlic, and aromatic herbs.',
+        prepTime: '5 min',
+        cookTime: '15 min',
+        totalTime: '20 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Italian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Fresh+Tomato+Garlic+Basil+Pasta+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Pasta', quantity: '200 g'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '4 ripe diced'),
+          RecipeIngredient(name: 'Garlic', quantity: '4 cloves minced'),
+          RecipeIngredient(name: 'Onions', quantity: '1 small diced'),
+          RecipeIngredient(name: 'Olive Oil', quantity: '1.5 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt & Pepper', quantity: 'To taste', isFromFridge: false),
+          RecipeIngredient(name: 'Oregano / Herbs', quantity: '1 tsp', isFromFridge: false),
+        ],
+        steps: [
+          'Boil pasta in a pot of salted water until al dente. Drain and set aside.',
+          'Heat olive oil in a skillet. Sauté onions and minced garlic until translucent.',
+          'Add diced ripe tomatoes, oregano, salt, and black pepper.',
+          'Simmer for 8 minutes, crushing tomatoes with a wooden spoon until a jammy sauce forms.',
+          'Toss pasta into the sauce and fold gently for 2 minutes to absorb flavors.',
+          'Serve warm topped with a sprinkle of cheese or fresh herbs.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 360,
+          protein: 11.5,
+          carbs: 62.0,
+          fat: 8.5,
+          fiber: 4.8,
+        ),
+      ),
+      const Recipe(
+        id: 'garlic_cheese_toast',
+        name: 'Crispy Garlic & Cheese Toast',
+        emoji: '🍞',
+        description: 'Crunchy golden bread slices topped with minced garlic butter and bubbling melted cheese.',
+        prepTime: '5 min',
+        cookTime: '8 min',
+        totalTime: '13 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Continental',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Crispy+Garlic+Cheese+Toast+recipe+skillet',
+        ingredients: [
+          RecipeIngredient(name: 'Bread', quantity: '4 slices'),
+          RecipeIngredient(name: 'Garlic', quantity: '4 cloves finely minced'),
+          RecipeIngredient(name: 'Cheese', quantity: '60 g shredded'),
+          RecipeIngredient(name: 'Butter', quantity: '2 tbsp softened', isFromFridge: false),
+          RecipeIngredient(name: 'Chili Flakes & Oregano', quantity: '1/2 tsp each', isFromFridge: false),
+        ],
+        steps: [
+          'In a small bowl, mix softened butter, minced garlic, and chili flakes together.',
+          'Spread the garlic butter generously over one side of each bread slice.',
+          'Top evenly with shredded cheese and a pinch of oregano.',
+          'Toast on a lidded tawa or skillet on low flame for 4-5 minutes until cheese melts and bottom is golden crisp.',
+          'Cut diagonally and serve hot as an irresistible snack.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 290,
+          protein: 9.5,
+          carbs: 28.0,
+          fat: 16.0,
+          fiber: 2.0,
+        ),
+      ),
+      const Recipe(
+        id: 'homestyle_bread_upma',
+        name: 'Spicy Homestyle Bread Upma',
+        emoji: '🍲',
+        description: 'Toasted bread cubes tossed with tempered onions, tomatoes, mustard seeds, and curry leaves.',
+        prepTime: '5 min',
+        cookTime: '10 min',
+        totalTime: '15 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Indian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Spicy+South+Indian+Bread+Upma+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Bread', quantity: '4 slices cut into cubes'),
+          RecipeIngredient(name: 'Onions', quantity: '1 medium chopped'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '1 large chopped'),
+          RecipeIngredient(name: 'Green Chillies', quantity: '2 slit'),
+          RecipeIngredient(name: 'Mustard Seeds', quantity: '1/2 tsp', isFromFridge: false),
+          RecipeIngredient(name: 'Cooking Oil', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Turmeric & Salt', quantity: '1/2 tsp each', isFromFridge: false),
+        ],
+        steps: [
+          'Cut bread slices into bite-sized 1-inch squares.',
+          'Heat oil in a pan. Splutter mustard seeds and curry leaves.',
+          'Add chopped onions and green chillies; sauté until soft and light golden.',
+          'Add chopped tomatoes, turmeric, and salt. Cook until tomatoes turn mushy.',
+          'Toss in bread cubes and sprinkle 1 tablespoon water. Fold gently until bread absorbs the masala.',
+          'Cook for 2 minutes on low flame and serve warm with a squeeze of lemon.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 220,
+          protein: 6.5,
+          carbs: 36.0,
+          fat: 6.0,
+          fiber: 3.2,
+        ),
+      ),
+      const Recipe(
+        id: 'masala_french_toast',
+        name: 'Savory Masala French Toast',
+        emoji: '🍳',
+        description: 'Thick bread soaked in spiced whisked eggs with chopped onions, coriander, and pan-fried.',
+        prepTime: '5 min',
+        cookTime: '8 min',
+        totalTime: '13 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Indian',
+        isVegetarian: false,
+        videoUrl: 'https://www.youtube.com/results?search_query=Indian+Savory+Masala+French+Toast+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Bread', quantity: '4 slices'),
+          RecipeIngredient(name: 'Eggs', quantity: '3 large'),
+          RecipeIngredient(name: 'Onions', quantity: '1/2 medium finely chopped'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '1/2 medium finely diced'),
+          RecipeIngredient(name: 'Green Chillies', quantity: '1 minced'),
+          RecipeIngredient(name: 'Coriander / Herbs', quantity: '2 tbsp chopped'),
+          RecipeIngredient(name: 'Butter or Oil', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt & Pepper', quantity: 'To taste', isFromFridge: false),
+        ],
+        steps: [
+          'In a wide dish, whisk eggs with salt, pepper, turmeric, chopped onions, tomatoes, green chilli, and coriander.',
+          'Heat butter or oil on a flat tawa or skillet over medium heat.',
+          'Dip bread slices into the egg mixture, coating both sides well with aromatics.',
+          'Place on hot tawa and cook for 2-3 minutes per side until golden brown and cooked through.',
+          'Serve hot with mint chutney or ketchup.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 310,
+          protein: 17.5,
+          carbs: 30.0,
+          fat: 13.5,
+          fiber: 2.8,
+        ),
+      ),
+      const Recipe(
+        id: 'chicken_egg_fried_rice',
+        name: 'Quick Chicken & Egg Fried Rice',
+        emoji: '🍚',
+        description: 'Fluffy rice stir-fried on high heat with scrambled eggs, chicken bits, onions, and aromatics.',
+        prepTime: '8 min',
+        cookTime: '10 min',
+        totalTime: '18 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Asian',
+        isVegetarian: false,
+        videoUrl: 'https://www.youtube.com/results?search_query=Chicken+and+Egg+Fried+Rice+quick+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Cooked Rice', quantity: '2 cups chilled'),
+          RecipeIngredient(name: 'Chicken', quantity: '150 g cooked or diced'),
+          RecipeIngredient(name: 'Eggs', quantity: '2 large beaten'),
+          RecipeIngredient(name: 'Onions', quantity: '1 small diced'),
+          RecipeIngredient(name: 'Garlic', quantity: '3 cloves minced'),
+          RecipeIngredient(name: 'Cooking Oil', quantity: '1.5 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Soy Sauce or Salt', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Black Pepper', quantity: '1/2 tsp', isFromFridge: false),
+        ],
+        steps: [
+          'Heat 1/2 tbsp oil in a wok or large pan. Scramble eggs softly and transfer to a plate.',
+          'Add remaining oil to wok on high flame. Sauté garlic and onions for 1 minute.',
+          'Add diced chicken and stir-fry for 3-4 minutes until cooked through.',
+          'Add cold cooked rice. Break up clumps and toss vigorously on high flame.',
+          'Drizzle soy sauce or salt and cracked pepper. Fold in scrambled eggs.',
+          'Toss for 1 more minute until fragrant and steaming. Serve hot.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 420,
+          protein: 28.0,
+          carbs: 48.0,
+          fat: 12.0,
+          fiber: 2.0,
+        ),
+      ),
+      const Recipe(
+        id: 'paneer_butter_masala_quick',
+        name: 'Quick Paneer Butter Masala',
+        emoji: '🧀',
+        description: 'Soft paneer cubes in a silky, mildly sweet and buttery tomato-onion makhani gravy.',
+        prepTime: '8 min',
+        cookTime: '15 min',
+        totalTime: '23 min',
+        servings: 2,
+        difficulty: 'Medium',
+        cuisine: 'Indian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Quick+Paneer+Butter+Masala+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Paneer', quantity: '200 g cubed'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '3 ripe blended'),
+          RecipeIngredient(name: 'Onions', quantity: '1 large finely chopped'),
+          RecipeIngredient(name: 'Butter', quantity: '1.5 tbsp'),
+          RecipeIngredient(name: 'Ginger & Garlic', quantity: '1 tsp each minced'),
+          RecipeIngredient(name: 'Curd / Cream', quantity: '2 tbsp'),
+          RecipeIngredient(name: 'Garam Masala & Salt', quantity: '1/2 tsp each', isFromFridge: false),
+        ],
+        steps: [
+          'Melt butter in a pan over medium heat. Sauté onions, ginger, and garlic until soft and fragrant.',
+          'Pour in blended tomato puree and cook for 6 minutes until gravy thickens.',
+          'Add garam masala, chili powder, and salt. Stir in curd or cream for richness.',
+          'Gently slide in paneer cubes. Simmer on low flame for 4 minutes to absorb flavors.',
+          'Garnish with a swirl of butter and fresh coriander. Serve with roti, naan, or rice.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 370,
+          protein: 18.0,
+          carbs: 12.0,
+          fat: 28.0,
+          fiber: 2.6,
+        ),
+      ),
+      const Recipe(
+        id: 'potato_onion_hash',
+        name: 'Crispy Spiced Potato & Onion Hash',
+        emoji: '🥔',
+        description: 'Golden skillet-crisped potato cubes tossed with sweet caramelized onions and herbs.',
+        prepTime: '8 min',
+        cookTime: '15 min',
+        totalTime: '23 min',
+        servings: 2,
+        difficulty: 'Easy',
+        cuisine: 'Continental',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Crispy+Potato+Onion+Hash+recipe+skillet',
+        ingredients: [
+          RecipeIngredient(name: 'Potatoes', quantity: '3 medium diced'),
+          RecipeIngredient(name: 'Onions', quantity: '1 large sliced'),
+          RecipeIngredient(name: 'Cooking Oil / Butter', quantity: '1.5 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt & Pepper', quantity: 'To taste', isFromFridge: false),
+          RecipeIngredient(name: 'Paprika / Chili Flakes', quantity: '1/2 tsp', isFromFridge: false),
+        ],
+        steps: [
+          'Dice potatoes into small 1/2-inch cubes. Rinse in cold water and pat dry.',
+          'Heat oil in a heavy non-stick skillet over medium heat.',
+          'Add potatoes in a single layer. Cook undisturbed for 5 minutes until underside browns.',
+          'Stir and add sliced onions, salt, and pepper.',
+          'Cook for another 8-10 minutes, tossing periodically until potatoes are fork-tender and crisp.',
+          'Sprinkle chili flakes and serve warm as a satisfying side or breakfast skillet.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 230,
+          protein: 4.2,
+          carbs: 36.0,
+          fat: 8.5,
+          fiber: 3.8,
+        ),
+      ),
+      const Recipe(
+        id: 'mixed_vegetable_pulao',
+        name: 'Wholesome Mixed Vegetable Pulao',
+        emoji: '🍚',
+        description: 'Fragrant basmati rice gently cooked with tender carrots, green peas, onions, and whole spices.',
+        prepTime: '10 min',
+        cookTime: '18 min',
+        totalTime: '28 min',
+        servings: 3,
+        difficulty: 'Easy',
+        cuisine: 'Indian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=One+Pot+Veg+Pulao+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Basmati Rice', quantity: '1.5 cups rinsed'),
+          RecipeIngredient(name: 'Carrots', quantity: '1 medium diced'),
+          RecipeIngredient(name: 'Onions', quantity: '1 medium sliced'),
+          RecipeIngredient(name: 'Green Peas / Beans', quantity: '1/2 cup'),
+          RecipeIngredient(name: 'Ginger & Garlic', quantity: '1 tsp each minced'),
+          RecipeIngredient(name: 'Ghee or Cooking Oil', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Cumin & Whole Spices', quantity: '1 tsp', isFromFridge: false),
+          RecipeIngredient(name: 'Salt', quantity: 'To taste', isFromFridge: false),
+        ],
+        steps: [
+          'Heat ghee or oil in a pot. Splutter cumin seeds and whole aromatics.',
+          'Add sliced onions, ginger, and garlic; sauté until golden.',
+          'Add diced carrots and green peas. Sauté for 2 minutes.',
+          'Add rinsed basmati rice and gently toast for 1 minute.',
+          'Add 2.5 cups water and salt. Bring to a rolling boil, then reduce flame to lowest, cover, and cook for 12 minutes.',
+          'Fluff gently with a fork and serve with cool raita.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 310,
+          protein: 6.5,
+          carbs: 58.0,
+          fat: 6.0,
+          fiber: 4.2,
+        ),
+      ),
+      const Recipe(
+        id: 'comforting_lentil_soup',
+        name: 'Hearty Lentil & Vegetable Soup',
+        emoji: '🥣',
+        description: 'Nutritious yellow lentils slow-simmered with diced tomatoes, carrots, garlic, and spinach.',
+        prepTime: '8 min',
+        cookTime: '20 min',
+        totalTime: '28 min',
+        servings: 3,
+        difficulty: 'Easy',
+        cuisine: 'Indian',
+        isVegetarian: true,
+        videoUrl: 'https://www.youtube.com/results?search_query=Healthy+Dal+Soup+with+spinach+and+vegetables+recipe',
+        ingredients: [
+          RecipeIngredient(name: 'Lentils / Dal', quantity: '1 cup washed'),
+          RecipeIngredient(name: 'Tomatoes', quantity: '2 ripe chopped'),
+          RecipeIngredient(name: 'Spinach', quantity: '1 cup roughly chopped'),
+          RecipeIngredient(name: 'Carrots', quantity: '1 medium diced'),
+          RecipeIngredient(name: 'Garlic', quantity: '4 cloves minced'),
+          RecipeIngredient(name: 'Cumin Seeds', quantity: '1 tsp', isFromFridge: false),
+          RecipeIngredient(name: 'Olive Oil / Ghee', quantity: '1 tbsp', isFromFridge: false),
+          RecipeIngredient(name: 'Turmeric & Salt', quantity: '1/2 tsp each', isFromFridge: false),
+        ],
+        steps: [
+          'Heat oil or ghee in a soup pot. Splutter cumin seeds and sauté minced garlic.',
+          'Add washed lentils, diced carrots, chopped tomatoes, turmeric, and 4 cups of water.',
+          'Bring to a boil, then cover and simmer on medium flame for 15 minutes until lentils soften.',
+          'Mash lightly with a whisk or immersion blender for creamy body.',
+          'Stir in fresh chopped spinach and simmer for 2 more minutes until vibrant green.',
+          'Season with salt, black pepper, and a squeeze of fresh lemon juice before serving.',
+        ],
+        nutrition: RecipeNutrition(
+          calories: 240,
+          protein: 14.0,
+          carbs: 38.0,
+          fat: 4.5,
+          fiber: 9.0,
         ),
       ),
     ];

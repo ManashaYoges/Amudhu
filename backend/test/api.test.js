@@ -113,6 +113,13 @@ test('password reset reports missing SMTP configuration instead of claiming emai
     .expect(({ body }) => assert.equal(body.code, 'EMAIL_NOT_CONFIGURED'));
 });
 
+test('direct password reset allows updating password when account exists', async () => {
+  await request(app).post('/api/auth/password-reset/direct').send({ email: 'nonexistent@example.com', newPassword: 'NewSecurePass123' }).expect(404);
+  await request(app).post('/api/auth/password-reset/direct').send({ email: 'test@example.com', newPassword: 'NewSecurePass123' }).expect(200)
+    .expect(({ body }) => assert.equal(body.success, true));
+  await request(app).post('/api/auth/login').send({ email: 'test@example.com', password: 'NewSecurePass123' }).expect(200);
+});
+
 test('meal CRUD is owner-scoped and rejects invalid input', async () => {
   const second = await request(app).post('/api/auth/register').send({ email: 'other@example.com', password: 'OtherPass123' }).expect(201);
   secondToken = second.body.token;
